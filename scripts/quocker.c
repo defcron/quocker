@@ -90,6 +90,7 @@ typedef struct Options {
   gboolean dry_run;
   gboolean config_no_env_resolution;
   gboolean config_no_interpolate;
+  gboolean config_no_path_resolution;
   int signal_number;
   gboolean remove_volumes;
   gboolean remove_orphans;
@@ -1834,6 +1835,43 @@ static char *absolute_path(const char *path, const char *base) {
   return g_canonicalize_filename(path, base);
 }
 
+static char *relative_path(const char *base, const char *path) {
+  gchar **base_parts = g_strsplit(base, G_DIR_SEPARATOR_S, -1);
+  gchar **path_parts = g_strsplit(path, G_DIR_SEPARATOR_S, -1);
+  guint base_len = g_strv_length(base_parts);
+  guint path_len = g_strv_length(path_parts);
+  guint common = 0;
+  while (common < base_len && common < path_len &&
+         g_str_equal(base_parts[common], path_parts[common])) {
+    common++;
+  }
+  GString *relative = g_string_new(NULL);
+  for (guint i = common; i < base_len; i++) {
+    if (!*base_parts[i]) {
+      continue;
+    }
+    if (relative->len) {
+      g_string_append_c(relative, G_DIR_SEPARATOR);
+    }
+    g_string_append(relative, "..");
+  }
+  for (guint i = common; i < path_len; i++) {
+    if (!*path_parts[i]) {
+      continue;
+    }
+    if (relative->len) {
+      g_string_append_c(relative, G_DIR_SEPARATOR);
+    }
+    g_string_append(relative, path_parts[i]);
+  }
+  g_strfreev(base_parts);
+  g_strfreev(path_parts);
+  if (!relative->len) {
+    g_string_append_c(relative, '.');
+  }
+  return g_string_free(relative, FALSE);
+}
+
 static void map_remove(YNode *map, const char *key) {
   for (guint i = 0; i < map->items->len; i++) {
     YPair *pair = g_ptr_array_index(map->items, i);
@@ -2041,7 +2079,8 @@ static GHashTable *include_environment_new(GHashTable *parent_environment,
 }
 
 static void resolve_included_service_paths(YNode *service,
-                                           const char *project_directory) {
+                                           const char *project_directory,
+                                           gboolean no_path_resolution) {
   YNode *image = map_get(service, "image");
   const char *image_name = node_string(image);
   gboolean local_image = image_name && (g_path_is_absolute(image_name) ||
@@ -2052,7 +2091,7 @@ static void resolve_included_service_paths(YNode *service,
     local_image = g_file_test(candidate, G_FILE_TEST_IS_REGULAR);
     g_free(candidate);
   }
-  if (local_image) {
+  if (local_image && !no_path_resolution) {
     char *absolute = absolute_path(image_name, project_directory);
     g_free(image->scalar);
     image->scalar = absolute;
@@ -2084,16 +2123,21 @@ static void resolve_included_service_paths(YNode *service,
 }
 
 static void resolve_included_model_paths(YNode *model,
-                                         const char *project_directory) {
+                                         const char *project_directory,
+                                         gboolean no_path_resolution) {
   YNode *services = map_get(model, "services");
   if (services && services->kind == NODE_MAPPING) {
     for (guint i = 0; i < services->items->len; i++) {
       YPair *pair = g_ptr_array_index(services->items, i);
-      resolve_included_service_paths(pair->value, project_directory);
+      resolve_included_service_paths(pair->value, project_directory,
+                                     no_path_resolution);
     }
   }
   for (const char *section_name = "configs"; section_name;
        section_name = g_str_equal(section_name, "configs") ? "secrets" : NULL) {
+    if (no_path_resolution) {
+      break;
+    }
     YNode *section = map_get(model, section_name);
     if (!section || section->kind != NODE_MAPPING) {
       continue;
@@ -2113,7 +2157,8 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
                                         GHashTable *environment,
                                         GHashTable *include_stack,
                                         guint depth,
-                                        gboolean no_interpolate) {
+                                        gboolean no_interpolate,
+                                        gboolean no_path_resolution) {
   YNode *includes = map_get(model, "include");
   if (!includes) {
     return TRUE;
@@ -2227,7 +2272,7 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
       ok = interpolated && expand_compose_includes(
                                included, absolute, default_project_directory,
                                included_environment, include_stack, depth + 1,
-                               no_interpolate);
+                               no_interpolate, no_path_resolution);
       g_hash_table_remove(include_stack, absolute);
       if (!ok) {
         node_free(included);
@@ -2247,7 +2292,8 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
       g_free(absolute);
     }
     g_ptr_array_free(paths, TRUE);
-    resolve_included_model_paths(entry_model, default_project_directory);
+    resolve_included_model_paths(entry_model, default_project_directory,
+                                 no_path_resolution);
     include_copy_missing_resources(imported_model, entry_model);
     node_free(entry_model);
     g_hash_table_destroy(included_environment);
@@ -2369,7 +2415,8 @@ static gboolean resolve_service_extends(YNode *model, const char *service_name,
                                         GHashTable *environment,
                                         GHashTable *resolution_stack,
                                         guint depth,
-                                        gboolean no_interpolate);
+                                        gboolean no_interpolate,
+                                        gboolean no_path_resolution);
 
 static gboolean resolve_service_extends(YNode *model, const char *service_name,
                                         const char *origin_file,
@@ -2377,7 +2424,8 @@ static gboolean resolve_service_extends(YNode *model, const char *service_name,
                                         GHashTable *environment,
                                         GHashTable *resolution_stack,
                                         guint depth,
-                                        gboolean no_interpolate) {
+                                        gboolean no_interpolate,
+                                        gboolean no_path_resolution) {
   if (depth >= 64) {
     fail("Compose extends nesting exceeds 64 services");
     return FALSE;
@@ -2470,7 +2518,7 @@ static gboolean resolve_service_extends(YNode *model, const char *service_name,
       prepared =
           expand_compose_includes(external_model, absolute_base_file,
                                   project_root, environment, include_stack, 0,
-                                  no_interpolate);
+                                  no_interpolate, no_path_resolution);
       g_hash_table_destroy(include_stack);
     }
     if (!prepared) {
@@ -2490,13 +2538,15 @@ static gboolean resolve_service_extends(YNode *model, const char *service_name,
   } else {
     ok = resolve_service_extends(base_model, base_name, absolute_base_file,
                                  project_root, environment, resolution_stack,
-                                 depth + 1, no_interpolate);
+                                 depth + 1, no_interpolate,
+                                 no_path_resolution);
   }
   if (ok) {
     base_service = map_get(map_get(base_model, "services"), base_name);
     if (absolute_base_file) {
       char *base_directory = g_path_get_dirname(absolute_base_file);
-      resolve_included_service_paths(base_service, base_directory);
+      resolve_included_service_paths(base_service, base_directory,
+                                     no_path_resolution);
       g_free(base_directory);
     }
     YNode *resolved = node_merge_extends(base_service, service, NULL);
@@ -2518,7 +2568,8 @@ static gboolean resolve_service_extends(YNode *model, const char *service_name,
 
 static gboolean resolve_compose_extends(YNode *model, const char *project_root,
                                         GHashTable *environment,
-                                        gboolean no_interpolate) {
+                                        gboolean no_interpolate,
+                                        gboolean no_path_resolution) {
   YNode *services = map_get(model, "services");
   if (!services || services->kind != NODE_MAPPING) {
     return TRUE;
@@ -2531,7 +2582,8 @@ static gboolean resolve_compose_extends(YNode *model, const char *project_root,
     const char *name = node_string(pair->key);
     if (name) {
       ok = resolve_service_extends(model, name, NULL, project_root, environment,
-                                   resolution_stack, 0, no_interpolate);
+                                   resolution_stack, 0, no_interpolate,
+                                   no_path_resolution);
     }
   }
   g_hash_table_destroy(resolution_stack);
@@ -2625,6 +2677,7 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
                                     GPtrArray *env_files,
                                     const char *explicit_project_name,
                                     gboolean no_interpolate,
+                                    gboolean no_path_resolution,
                                     YNode **config,
                                     GHashTable **environment_out,
                                     char **project_name_out) {
@@ -2755,7 +2808,8 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
       g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   gboolean includes_ok = expand_compose_includes(interpolated, NULL, root,
                                                  environment, include_stack, 0,
-                                                 no_interpolate);
+                                                 no_interpolate,
+                                                 no_path_resolution);
   g_hash_table_destroy(include_stack);
   if (!includes_ok) {
     node_free(interpolated);
@@ -2766,7 +2820,7 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
     return FALSE;
   }
   if (!resolve_compose_extends(interpolated, root, environment,
-                               no_interpolate)) {
+                               no_interpolate, no_path_resolution)) {
     node_free(interpolated);
     node_free(merged);
     g_hash_table_destroy(environment);
@@ -4806,7 +4860,8 @@ static YNode *config_environment_string(const char *value,
 
 static YNode *config_env_file_path_entry(YNode *spec, const char *project_root,
                                          const char *service_name,
-                                         gboolean no_interpolate) {
+                                         gboolean no_interpolate,
+                                         gboolean resolve_path) {
   const char *path = spec->kind == NODE_SCALAR
                          ? node_string(spec)
                          : node_string(map_get(spec, "path"));
@@ -4829,7 +4884,14 @@ static YNode *config_env_file_path_entry(YNode *spec, const char *project_root,
          service_name);
     return NULL;
   }
-  char *absolute = absolute_path(path, project_root);
+  char *absolute = NULL;
+  if (resolve_path) {
+    absolute = absolute_path(path, project_root);
+  } else if (g_path_is_absolute(path)) {
+    absolute = relative_path(project_root, path);
+  } else {
+    absolute = g_strdup(path);
+  }
   YNode *entry = spec->kind == NODE_MAPPING
                      ? node_clone(spec)
                      : node_new(NODE_MAPPING, TAG_MAP);
@@ -4851,7 +4913,8 @@ static YNode *config_env_file_path_entry(YNode *spec, const char *project_root,
 static gboolean normalize_config_env_file_paths(YNode *service,
                                                 const char *project_root,
                                                 const char *service_name,
-                                                gboolean no_interpolate) {
+                                                gboolean no_interpolate,
+                                                gboolean resolve_path) {
   YNode *env_file = map_get(service, "env_file");
   if (!env_file) {
     return TRUE;
@@ -4861,7 +4924,7 @@ static gboolean normalize_config_env_file_paths(YNode *service,
     for (guint i = 0; i < env_file->items->len; i++) {
       YNode *entry = config_env_file_path_entry(
           g_ptr_array_index(env_file->items, i), project_root, service_name,
-          no_interpolate);
+          no_interpolate, resolve_path);
       if (!entry) {
         node_free(normalized);
         return FALSE;
@@ -4870,7 +4933,8 @@ static gboolean normalize_config_env_file_paths(YNode *service,
     }
   } else {
     YNode *entry = config_env_file_path_entry(env_file, project_root,
-                                              service_name, no_interpolate);
+                                              service_name, no_interpolate,
+                                              resolve_path);
     if (!entry) {
       node_free(normalized);
       return FALSE;
@@ -4885,7 +4949,8 @@ static gboolean resolve_config_service_env_files(YNode *config,
                                                  const char *project_root,
                                                  GHashTable *environment,
                                                  gboolean resolve_env_files,
-                                                 gboolean preserve_environment) {
+                                                 gboolean preserve_environment,
+                                                 gboolean resolve_paths) {
   YNode *services = map_get(config, "services");
   for (guint i = 0; services && i < services->items->len; i++) {
     YPair *service_pair = g_ptr_array_index(services->items, i);
@@ -4899,7 +4964,8 @@ static gboolean resolve_config_service_env_files(YNode *config,
     }
     if (has_env_file && !resolve_env_files &&
         !normalize_config_env_file_paths(service, project_root,
-                                         service_name, preserve_environment)) {
+                                         service_name, preserve_environment,
+                                         resolve_paths)) {
       return FALSE;
     }
     if (preserve_environment) {
@@ -7466,6 +7532,7 @@ static void usage(FILE *file) {
           "  config --environment        Print interpolation environment\n"
           "  config --no-env-resolution Retain normalized env_file paths\n"
           "  config --no-interpolate    Preserve variable expressions\n"
+          "  config --no-path-resolution Keep config file paths relative\n"
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
@@ -7700,6 +7767,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(opts->command, "config") &&
                g_str_equal(arg, "--no-interpolate")) {
       opts->config_no_interpolate = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "config") &&
+               g_str_equal(arg, "--no-path-resolution")) {
+      opts->config_no_path_resolution = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
                (g_str_equal(arg, "-q") || g_str_equal(arg, "--quiet"))) {
       opts->quiet = TRUE;
@@ -8585,6 +8655,7 @@ int main(int argc, char **argv) {
   char *project_lower = NULL;
   if (!parse_compose_files(files, root, opts.env_files, opts.project_name,
                            opts.config_no_interpolate,
+                           opts.config_no_path_resolution,
                            &config, &project_environment, &project_lower)) {
     return 1;
   }
@@ -8592,7 +8663,8 @@ int main(int argc, char **argv) {
       !resolve_config_service_env_files(config, root, project_environment,
                                         !opts.config_no_env_resolution &&
                                             !opts.config_no_interpolate,
-                                        opts.config_no_interpolate)) {
+                                        opts.config_no_interpolate,
+                                        !opts.config_no_path_resolution)) {
     return 1;
   }
   YNode *services = map_get(config, "services");

@@ -184,12 +184,11 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
      - ``--format yaml|json``, ``-o``/``--output FILE``, ``--quiet``,
        ``--environment``, ``--services``, ``--profiles``, ``--images``,
        ``--volumes``, ``--networks``, ``--models``, ``--no-env-resolution``,
-       ``--no-interpolate``, and Quocker-specific
-       ``--capabilities``.
+       ``--no-interpolate``, partial ``--no-path-resolution``, and
+       Quocker-specific ``--capabilities``.
      - ``--hash``, ``--lock-image-digests``, ``--variables``,
-       ``--no-consistency``, ``--no-normalize``, ``--no-path-resolution``,
-       and image-digest
-       resolution. See the
+       ``--no-consistency``, ``--no-normalize``, and image-digest resolution.
+       See the
        `Compose config reference <https://docs.docker.com/reference/cli/docker/compose/config/>`_.
    * - ``start``, ``stop``, ``restart``, ``pause``, ``unpause``
      - Service names; ``--dry-run`` for lifecycle planning. ``stop`` and
@@ -309,6 +308,9 @@ including explicit empty and unresolved values. The rendered service omits
 paths in normalized absolute-path form.
 ``config --no-interpolate`` retains variable expressions in the rendered model
 and skips service env-file resolution.
+``config --no-path-resolution`` preserves relative paths for service env files
+that remain in the output, plus local image/config/secret paths from included or
+extended models. Other path-valued Compose fields are not fully normalized yet.
 These output selection modes cannot be combined with ``--format``; without an
 output selection option, ``config`` renders YAML by default or JSON with
 ``--format json``.

@@ -61,6 +61,33 @@ int main(int argc, char **argv) {
       json_object_get_string_member(external_environment, "FROM_EXTENDS"), ==,
       "external");
 
+  char *no_path_arguments[] = {
+      (char *)cli, (char *)"-f", argv[1], (char *)"config",
+      (char *)"--no-env-resolution", (char *)"--no-path-resolution",
+      (char *)"--format", (char *)"json", NULL};
+  g_free(output);
+  g_free(stderr_text);
+  output = NULL;
+  stderr_text = NULL;
+  status = 0;
+  g_assert_true(g_spawn_sync(NULL, no_path_arguments, NULL, G_SPAWN_DEFAULT,
+                             NULL, NULL, &output, &stderr_text, &status,
+                             &error));
+  g_assert_no_error(error);
+  g_assert_true(g_spawn_check_wait_status(status, &error));
+  g_assert_no_error(error);
+  g_assert_true(json_parser_load_from_data(parser, output, -1, &error));
+  g_assert_no_error(error);
+  root = json_node_get_object(json_parser_get_root(parser));
+  services = json_object_get_object_member(root, "services");
+  external = json_object_get_object_member(services, "external_child");
+  g_assert_cmpstr(json_object_get_string_member(external, "image"), ==,
+                  "./guest.qcow2");
+  JsonArray *env_files = json_object_get_array_member(external, "env_file");
+  JsonObject *external_env_file = json_array_get_object_element(env_files, 0);
+  g_assert_cmpstr(json_object_get_string_member(external_env_file, "path"),
+                  ==, "extends/fragments/common.env");
+
   g_free(expected_image);
   g_free(expected_image_path);
   g_free(compose_directory);

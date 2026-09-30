@@ -398,6 +398,8 @@ in user-facing compatibility promises.
    declarations with absolute paths and skips reading their contents.
    `--no-interpolate` preserves Compose variable expressions and skips service
    env-file resolution while still merging and validating the Compose model.
+   `--no-path-resolution` preserves service env-file paths and included or
+   extended model paths; broader path-valued field normalization remains open.
    Schema-aware normalization, image resolution, path output modes, and the
    remaining Docker Compose config flags remain.
 9. **Partially implemented:** service-level `x-quocker` is versioned as
