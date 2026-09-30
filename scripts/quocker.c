@@ -1879,6 +1879,8 @@ static gboolean config_volume_source_is_path(const char *source) {
           g_str_equal(source, ".."));
 }
 
+static gboolean absolutize_include_node(YNode *node, const char *base);
+
 static void config_resolve_volume_source(YNode *source, const char *base,
                                          gboolean no_path_resolution) {
   const char *value = node_string(source);
@@ -1927,6 +1929,28 @@ static void config_resolve_service_volume_paths(YNode *service,
       g_free(absolute);
     }
     g_strfreev(parts);
+  }
+}
+
+static void config_resolve_model_resource_paths(YNode *model,
+                                                const char *base,
+                                                gboolean no_path_resolution) {
+  if (no_path_resolution) {
+    return;
+  }
+  for (const char *section_name = "configs"; section_name;
+       section_name = g_str_equal(section_name, "configs") ? "secrets" : NULL) {
+    YNode *section = map_get(model, section_name);
+    if (!section || section->kind != NODE_MAPPING) {
+      continue;
+    }
+    for (guint i = 0; i < section->items->len; i++) {
+      YPair *pair = g_ptr_array_index(section->items, i);
+      YNode *file = map_get(pair->value, "file");
+      if (file && file->kind == NODE_SCALAR) {
+        absolutize_include_node(file, base);
+      }
+    }
   }
 }
 
@@ -2193,23 +2217,8 @@ static void resolve_included_model_paths(YNode *model,
                                      no_path_resolution);
     }
   }
-  for (const char *section_name = "configs"; section_name;
-       section_name = g_str_equal(section_name, "configs") ? "secrets" : NULL) {
-    if (no_path_resolution) {
-      break;
-    }
-    YNode *section = map_get(model, section_name);
-    if (!section || section->kind != NODE_MAPPING) {
-      continue;
-    }
-    for (guint i = 0; i < section->items->len; i++) {
-      YPair *pair = g_ptr_array_index(section->items, i);
-      YNode *file = map_get(pair->value, "file");
-      if (file && file->kind == NODE_SCALAR) {
-        absolutize_include_node(file, project_directory);
-      }
-    }
-  }
+  config_resolve_model_resource_paths(model, project_directory,
+                                      no_path_resolution);
 }
 
 static gboolean expand_compose_includes(YNode *model, const char *compose_path,
@@ -2894,6 +2903,8 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
     config_resolve_service_volume_paths(service_pair->value, root,
                                         no_path_resolution);
   }
+  config_resolve_model_resource_paths(interpolated, root,
+                                      no_path_resolution);
   YNode *normalized_name = node_new(NODE_SCALAR, TAG_STR);
   normalized_name->scalar = g_strdup(*project_name_out);
   map_set(interpolated, "name", normalized_name);

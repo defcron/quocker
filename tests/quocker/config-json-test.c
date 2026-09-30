@@ -23,6 +23,28 @@ int main(int argc, char **argv) {
   g_assert_true(json_parser_load_from_data(parser, output, -1, &error));
   g_assert_no_error(error);
   JsonObject *root = json_node_get_object(json_parser_get_root(parser));
+  char *resource_directory = g_path_get_dirname(argv[1]);
+  char *config_file =
+      g_build_filename(resource_directory, "config-json-config.txt", NULL);
+  char *expected_config_file = g_canonicalize_filename(config_file, NULL);
+  char *secret_file = g_build_filename(resource_directory, "..",
+                                       "config-json-secret.txt", NULL);
+  char *expected_secret_file = g_canonicalize_filename(secret_file, NULL);
+  JsonObject *configs = json_object_get_object_member(root, "configs");
+  JsonObject *secrets = json_object_get_object_member(root, "secrets");
+  g_assert_cmpstr(json_object_get_string_member(
+                      json_object_get_object_member(configs, "app-config"),
+                      "file"),
+                  ==, expected_config_file);
+  g_assert_cmpstr(json_object_get_string_member(
+                      json_object_get_object_member(secrets, "app-secret"),
+                      "file"),
+                  ==, expected_secret_file);
+  g_free(expected_secret_file);
+  g_free(secret_file);
+  g_free(expected_config_file);
+  g_free(config_file);
+  g_free(resource_directory);
   JsonObject *services = json_object_get_object_member(root, "services");
   JsonObject *app = json_object_get_object_member(services, "app");
   g_assert_cmpstr(json_object_get_string_member(app, "image"), ==,
@@ -200,6 +222,16 @@ int main(int argc, char **argv) {
   g_assert_true(json_parser_load_from_data(parser, output, -1, &error));
   g_assert_no_error(error);
   root = json_node_get_object(json_parser_get_root(parser));
+  configs = json_object_get_object_member(root, "configs");
+  secrets = json_object_get_object_member(root, "secrets");
+  g_assert_cmpstr(json_object_get_string_member(
+                      json_object_get_object_member(configs, "app-config"),
+                      "file"),
+                  ==, "./config-json-config.txt");
+  g_assert_cmpstr(json_object_get_string_member(
+                      json_object_get_object_member(secrets, "app-secret"),
+                      "file"),
+                  ==, "../config-json-secret.txt");
   services = json_object_get_object_member(root, "services");
   app = json_object_get_object_member(services, "app");
   mounts = json_object_get_array_member(app, "volumes");

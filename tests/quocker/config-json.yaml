@@ -1,4 +1,10 @@
 name: json-test
+configs:
+  app-config:
+    file: ./config-json-config.txt
+secrets:
+  app-secret:
+    file: ../config-json-secret.txt
 services:
   app:
     image: "alpine:latest"
