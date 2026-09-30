@@ -175,6 +175,7 @@ meson_options_help() {
   printf "%s\n" '  qemu-vnc        standalone VNC server over D-Bus'
   printf "%s\n" '  qga-vss         build QGA VSS support (broken with MinGW)'
   printf "%s\n" '  qpl             Query Processing Library support'
+  printf "%s\n" '  quocker         Build the Quocker Compose-style VM manager'
   printf "%s\n" '  rbd             Ceph block device driver'
   printf "%s\n" '  rdma            Enable RDMA-based migration'
   printf "%s\n" '  replication     replication support'
@@ -461,6 +462,8 @@ _meson_option_parse() {
     --disable-qom-cast-debug) printf "%s" -Dqom_cast_debug=false ;;
     --enable-qpl) printf "%s" -Dqpl=enabled ;;
     --disable-qpl) printf "%s" -Dqpl=disabled ;;
+    --enable-quocker) printf "%s" -Dquocker=enabled ;;
+    --disable-quocker) printf "%s" -Dquocker=disabled ;;
     --enable-rbd) printf "%s" -Drbd=enabled ;;
     --disable-rbd) printf "%s" -Drbd=disabled ;;
     --enable-rdma) printf "%s" -Drdma=enabled ;;

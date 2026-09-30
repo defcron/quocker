@@ -1,0 +1,3 @@
+services:
+  app:
+    image: "alpine:${QUOCKER_ENV_BASE_FROM_LIST:?COMPOSE_ENV_FILES did not load the file}"

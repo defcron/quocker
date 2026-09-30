@@ -1,0 +1,10 @@
+name: json-test
+services:
+  app:
+    image: "alpine:latest"
+    cpus: 2
+    mem_limit: 1G
+    privileged: true
+    command:
+      - echo
+      - "true"

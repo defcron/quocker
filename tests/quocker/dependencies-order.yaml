@@ -1,0 +1,15 @@
+services:
+  app:
+    image: ./app.qcow2
+    depends_on:
+      - database
+    ports:
+      - "127.0.0.1:8080:80"
+      - "9000-9001:80-81/udp"
+      - target: 53
+        published: "5353"
+        host_ip: 127.0.0.1
+        protocol: udp
+        mode: host
+  database:
+    image: ./database.qcow2

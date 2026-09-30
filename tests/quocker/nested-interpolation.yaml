@@ -1,0 +1,3 @@
+services:
+  app:
+    image: "${QUOCKER_OUTER_IMAGE:-${QUOCKER_INNER_IMAGE:-alpine:latest}}"

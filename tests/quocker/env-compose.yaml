@@ -1,0 +1,11 @@
+services:
+  app:
+    image: "alpine:${SHARED}"
+    environment:
+      VALUE: "${VALUE}"
+      LATER: "${LATER}"
+      SINGLE: "${SINGLE}"
+      GONE: "${GONE:-removed}"
+      COMMENTED: "${COMMENTED}"
+      HASHED: "${HASHED}"
+      ESCAPED: "${ESCAPED}"

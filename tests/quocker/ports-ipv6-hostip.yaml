@@ -1,0 +1,5 @@
+services:
+  app:
+    image: ./app.qcow2
+    ports:
+      - "[::1]:8443:443"

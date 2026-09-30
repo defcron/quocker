@@ -1,0 +1,7 @@
+services:
+  app:
+    image: alpine:latest
+---
+services:
+  other:
+    image: debian:stable

@@ -1,0 +1,5 @@
+# ${QUOCKER_MISSING_COMMENT:?comments must not be interpolated}
+services:
+  app:
+    image: alpine:latest
+"x-${QUOCKER_MISSING_KEY:?mapping keys must not be interpolated}": retained

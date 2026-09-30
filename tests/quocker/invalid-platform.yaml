@@ -1,0 +1,4 @@
+services:
+  invalid:
+    image: hello-world:latest
+    platform: windows/amd64

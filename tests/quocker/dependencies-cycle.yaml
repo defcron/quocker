@@ -1,0 +1,7 @@
+services:
+  first:
+    image: ./first.qcow2
+    depends_on: [second]
+  second:
+    image: ./second.qcow2
+    depends_on: [first]

@@ -1,0 +1,13 @@
+name: quocker-test
+x-example-extension:
+  opaque:
+    - values
+    - are
+    - retained
+services:
+  app:
+    image: ./guest.qcow2
+    profiles:
+      - test
+    labels:
+      io.quocker.test: "true"

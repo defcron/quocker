@@ -1,0 +1,8 @@
+services:
+  app:
+    image: ./app.qcow2
+    depends_on:
+      database:
+        condition: service_healthy
+  database:
+    image: ./database.qcow2

@@ -1,0 +1,6 @@
+name: quocker-merge-test
+services:
+  app:
+    image: ./guest.qcow2
+    labels:
+      io.quocker.base: kept

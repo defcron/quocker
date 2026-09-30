@@ -1,0 +1,7 @@
+services:
+  app:
+    image: ./app.qcow2
+    ports:
+      - target: 80
+        published: "8080"
+        host_ip: "127.0.0.1,guestfwd=tcp:1.2.3.4:5-cmd:evil"

@@ -1,0 +1,551 @@
+# Quocker development roadmap
+
+**Status:** draft for project-owner review
+**Written:** 2026-09-29
+**Applies to:** the `quocker` branch of this QEMU fork
+
+This document inventories the work required to take Quocker from its current
+prototype to a documented, supportable Compose-style VM manager. It is a
+planning baseline, not a promise that every Docker Compose container feature
+has a meaningful VM equivalent.
+
+## Execution ledger
+
+- **Upstream base:** fetched the official QEMU `stable-11.1` branch at
+  `4fc49f46dc` (QEMU 11.1.2). A live `git ls-remote` check still reports that
+  exact commit as `stable-11.1`; only `quocker` was fast-forwarded and the
+  repository's `master` branch was not changed.
+- **Product boundary confirmed by the owner:** Quocker manages QEMU/KVM
+  configuration and orchestrates applications and networks running in or with
+  those VMs. Container management is out of scope.
+- **Image direction requested by the owner:** allow familiar OCI/Docker Hub
+  image references in Compose-shaped files and turn their userland filesystem
+  into a bootable VM guest by supplying a kernel and Quocker guest init. The
+  guest is a VM; Quocker does not manage containers.
+- **Bootstrap direction:** start a trusted Quocker initramfs, mount the
+  converted OCI root disk, and exec the OCI `Entrypoint`/`Cmd` as the guest
+  workload. This supports minimal and distroless image filesystems without
+  requiring their own init system. Kernel downloads come only from an
+  administrator-trusted signed catalog or explicit local profile; image
+  metadata can constrain selection but cannot supply executable kernel URLs
+  or trust keys. Compose networks and volumes must map to explicit VM
+  resources, and untranslatable container-only fields must be reported.
+- **OCI architecture:** initial design is recorded in
+  `QUOCKER-OCI-VM-DESIGN.md`. The C CLI now has a first OCI pull path for
+  HTTPS registries: it parses image refs, selects Linux platform manifests,
+  obtains Bearer tokens, follows bounded HTTPS blob redirects without
+  forwarding credentials across hosts, verifies cached blobs, and materializes
+  OCI layers to staging rootfs directories with whiteouts, path protections,
+  and resource limits. ``pull`` now also converts the staged filesystem to a
+  content-addressed raw ext4 guest disk after preflighting the configured OCI
+  cache quota. This disk is structurally checked in tests and in the public
+  registry smoke flow. A statically linked guest-init binary now mounts the
+  ext4 root and supervises the OCI command; a C initrd builder appends it and
+  the bounded runtime config to a digest-verified catalog initrd. OCI-backed
+  `up` now selects catalog assets, downloads missing remote bundles from signed
+  catalog HTTPS URLs, verifies declared sizes and digests, assembles that
+  initrd, converts the rootfs when needed, and passes the kernel, initrd, and
+  root disk to QEMU. OCI UID/GID/mode plus extended
+  attributes are retained as inert Quocker xattrs in the staging tree; this
+  does not apply privileged attributes to the host. A bounded C helper reads
+  guest distro ID, ID_LIKE, and VERSION_ID through a confined os-release path
+  for kernel-selection hints. A local catalog selector verifies and ranks
+  kernel/initrd assets, and OCI `up` uses that result for VM startup.
+  OCI runtime defaults (Entrypoint, Cmd, Env, WorkingDir, User, and Volumes)
+  are parsed in C and merged with supported Compose overrides for OCI `up`.
+  The owner has clarified the OCI compatibility goal: reuse
+  Docker Hub image declarations as VM guest userlands, with a Quocker-supplied
+  kernel. The evidence-based kernel matching and signed remote bundle-fetch
+  design is now documented in `QUOCKER-OCI-VM-DESIGN.md`. Its new Docker Hub
+  compatibility-layer contract defines OCI images as reusable VM userlands,
+  with a catalog kernel/initrd and Quocker bootstrap assembled at runtime;
+  selection uses platform constraints, explicit requirements, rootfs evidence,
+  then a compatible generic profile. `quocker kernel update` verifies the
+  signed catalog and installs it atomically; `quocker kernel fetch` supports
+  explicit bundle prefetch. OCI `up` fetches selected bundles automatically.
+  The OCI image config
+  parser now validates Quocker kernel labels for exact catalog ID, minimum
+  numeric version, and required feature tokens; `pull` summarizes them without
+  exposing runtime environment values. The lower-level catalog selector now
+  enforces minimum version and feature requirements, and `pull` passes OCI
+  labels plus Compose `x-quocker.kernel` overrides into that selector when a
+  local signed catalog is available. Rootfs inspection detects shipped
+  kernel module releases through confined paths. These releases are advisory;
+  matching catalog entries win ties, and the selector reports matched or
+  unmatched evidence. `quocker kernel select --rootfs`, `pull`, and OCI `up`
+  apply image labels plus Compose kernel hints.
+  OCI images do not generally declare a unique kernel requirement, so platform
+  is a hard constraint, labels can declare requirements, distro identity ranks
+  candidates, and module directories provide advisory compatibility evidence.
+  OCI ``io.quocker.kernel.module_releases`` and Compose
+  ``x-quocker.kernel.module_releases`` can declare hard acceptable ABI
+  requirements. `quocker kernel select --json` reports constraints, selection
+  evidence, module matches, and verified asset digests.
+- **Language/build:** the Python Quocker entry point has been replaced by
+  `scripts/quocker.c`, `scripts/quocker-oci.c`, `scripts/quocker-rootfs.c`,
+  `scripts/quocker-kernel.c`, `scripts/quocker-image.c`, and
+  `scripts/quocker-disk.c`, `scripts/quocker-registry-auth.c`, using GLib,
+  libyaml, libcurl, json-glib,
+  libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
+  11.1.2 build and the updated Quocker target compile completed. The Quocker
+  Meson suite now has 36 focused tests; its latest complete run reported 21
+  passes and 15 expected failures.
+  Tests include Docker config registry-auth parsing, Compose dependency order,
+  and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
+  ownership and extended-attribute metadata, traversal and symlink-parent
+  rejection, inert device placeholders, pruning, and the cache-limit
+  completion-marker regression. Eight rootfs cases include OS-release
+  confinement, the standard usr/lib symlink, embedded-NUL rejection, and
+  module-release detection. Five kernel-catalog cases cover signed catalogs,
+  distro priority, family/pin selection, image minimum-version/feature
+  matching, CLI output, platform
+  matching, and asset digest verification. Two disk-conversion cases verify
+  ext4 metadata replay, character-device/FIFO inode creation, and no-host-node
+  behavior. The updated public
+  Docker Hub `hello-world:latest` pull verified manifest/config/layer
+  download, cache verification, and rootfs materialization. OCI-to-QEMU launch
+  is wired, but no trusted production kernel catalog is provisioned here, so a
+  complete boot smoke test and full Compose runtime compatibility remain open.
+- **Roadmap state:** Phase 0 has a confirmed VM-only boundary and an OCI-to-VM
+  design, with platform/kernel/init decisions still open. Phase 1 has a
+  working optional target but still needs packaging and CLI polish; Phase 2 is
+  a partial parser with no Compose schema validation. Phase 3 now orders
+  selected services after their `depends_on` dependencies and offers
+  `up --dry-run`. VM lifecycle `start`, `stop`, `restart`, and `kill` commands
+  now use saved QEMU process/disk state; stop preserves VM state, restart
+  follows dependency ordering, and kill accepts named/numeric signals. A fake
+  QEMU integration test covers stop, start, and down. Guest readiness,
+  crash recovery, and most command compatibility remain open. New state files
+  record Linux process start-time ticks; stop/status compare the recorded value
+  before signaling or reporting a VM process, with a regression proving a
+  mismatched/recycled PID is left untouched. Signals bind to pidfds where the
+  host kernel supports them; older kernels fall back to immediate identity
+  revalidation. Older state without start-time metadata remains readable but
+  has only the VM-name process check. QEMU now exposes a private
+  per-service QMP socket; `pause` and `unpause` negotiate QMP capabilities and
+  issue `stop`/`cont`, with a fake QMP integration check. Phase 6 now translates short and long Compose port mappings,
+  numeric equal-sized port ranges, and numeric IPv4 host bindings into QEMU
+  user-network forwarding rules, including ephemeral host ports (`HOST:0` or
+  target-only declarations). `quocker port` reads QEMU's `info usernet` reply
+  over QMP to report the allocated endpoint while the VM is running; static
+  mappings remain queryable while stopped. A QEMU 11.1 monitor smoke check
+  confirmed ephemeral allocation and the reported host/guest port columns.
+  IPv6 host binding is rejected because the current QEMU user-network
+  host-forward parser does not support it. Isolated
+  Compose networks and other networking backends remain open. Phases 4–5 and
+  7–10 remain open.
+
+## 1. Product goal and compatibility contract
+
+Quocker's intended interface is Docker Compose-shaped: users should be able to
+use familiar Compose filenames, YAML, project conventions, and command forms
+to describe and manage QEMU virtual machines. QEMU remains the VM engine and
+Quocker remains an optional interface; ordinary QEMU tools and workflows must
+continue to work.
+
+The phrase “drop-in Docker Compose file” needs a precise contract before
+implementation is considered complete. Docker Compose describes containers,
+while Quocker describes VMs. For example, an OCI image such as `nginx:latest`
+does not itself provide the guest kernel and boot process needed by QEMU, and a
+container `command` does not automatically become a VM boot command. There are
+three distinct compatibility targets:
+
+1. **File compatibility:** accept and validate the current Compose
+   Specification, including its YAML forms, extensions, and merge behavior.
+2. **Command compatibility:** provide familiar command names, flags, project
+   behavior, output, and lifecycle semantics where those concepts apply to VMs.
+3. **Runtime compatibility:** make each accepted service setting produce the
+   expected result in a guest VM.
+
+The first two can be made broad. The third requires explicit decisions about
+OCI images, guest provisioning, filesystems, and networking. Quocker must not
+claim full runtime compatibility while silently dropping meaningful settings.
+Each Compose attribute should be classified as **implemented**, **translated
+with documented VM semantics**, **preserved but unsupported at runtime**, or
+**invalid**. A strict mode should reject unsupported runtime settings; a
+permissive config/inspection mode can retain them and explain their status.
+
+The Compose Specification itself recognizes that implementations may support
+different subsets and recommends reporting unsupported attributes. Its
+current reference and schema are the compatibility baseline to pin and track:
+[Compose file reference](https://docs.docker.com/reference/compose-file/),
+[Compose Specification](https://github.com/compose-spec/compose-spec/blob/main/spec.md),
+[Compose JSON schema](https://github.com/compose-spec/compose-spec/blob/main/schema/compose-spec.json).
+
+## 2. Current implementation inventory
+
+The working tree contains an initial native C CLI at `scripts/quocker.c`,
+installed as an optional Meson target, with a user page at
+`docs/tools/quocker.rst`. The prototype currently:
+
+- searches for `compose.yaml`, `compose.yml`, both legacy `docker-compose`
+  names, and two `quocker-compose` aliases;
+- parses YAML mappings, interpolates a subset of environment syntax, merges
+  multiple files with basic rules, retains unknown fields for `config`, and
+  recognizes `!reset` / `!override` tags;
+- provides `up`, `down`, `rm`, `ps`, `logs`, and `config`, with direct and
+  `quocker compose` command forms;
+- resolves Docker Hub and generic HTTPS registry image references through
+  `pull`, selects a Linux platform manifest, downloads its config and layers,
+  caches the selected manifest, verifies SHA-256 content digests into the XDG
+  user cache, and rehashes cache hits before reuse;
+- starts QEMU from local bootable disks or OCI images converted to guest disks,
+  makes qcow2 overlays, applies basic memory/CPU settings, and forwards a
+  limited set of ports with QEMU user networking;
+- stores state under `.quocker/PROJECT` and captures serial output.
+
+This is prototype groundwork, not a finished Compose implementation. It has no
+full Compose schema validation or broad compatibility fixture suite, no
+Quockerfile build workflow, no real Compose volume/network model, and only
+partial file merge and interpolation semantics. The YAML reader rejects
+duplicate mapping keys and extra documents, `COMPOSE_FILE` honors
+`COMPOSE_PATH_SEPARATOR`, and interpolation handles nested Compose operators
+on YAML values while leaving comments and keys untouched.
+`.env`, repeated `--env-file`, `COMPOSE_ENV_FILES`, and
+`COMPOSE_DISABLE_ENV_FILE` now use shell-over-file and later-file-over-earlier
+precedence, quoted/unquoted parsing, comments, common double-quoted escapes,
+single-quoted literals, unset entries, and strict explicit-file errors.
+OCI-to-VM preparation and QEMU launch are integrated, but production boot,
+process/state recovery, cleanup, and packaging need more coverage and review.
+OCI service ``env_file`` now supports ordered path lists, interpolation,
+optional long-form files, raw format, and service-environment precedence in C;
+explicit unresolved environment entries remove image defaults. The current
+The Quocker suite contains 37 tests: 23 pass, 14 produce expected failures,
+and none fail unexpectedly. It includes JSON config serialization, static and
+dynamic port queries, plus a fake-QEMU lifecycle integration
+test covering stop, start, down, pause, unpause, kill, state preservation, and
+PID reuse protection. This does not establish Compose-wide compatibility.
+
+## 3. Phased work plan
+
+### Phase 0 — Set the product boundary and compatibility matrix
+
+1. Pin the Compose Specification and schema revision used for each Quocker
+   release; document how updates are reviewed.
+2. Define the supported host operating systems and architectures for the first
+   release. Start with Linux x86_64 unless the project chooses a wider target.
+3. Quocker manages VMs and application/network configuration for those VMs;
+   container lifecycle and container runtime management are out of scope.
+   Define the guest integration boundary for managing applications without
+   taking responsibility for containers.
+4. Define OCI image compatibility as conversion into a VM root filesystem,
+   never as container execution. Specify registry/mirror lookup, OCI platform
+   selection, supported manifest versions, layer materialization, boot assets,
+   cache policy, and lifecycle semantics.
+5. Specify how Docker `command`, `entrypoint`, `environment`, `env_file`,
+   `user`, `working_dir`, health checks, and startup dependencies map into a
+   guest. The initial design is a Quocker initramfs bootstrap with a narrow
+   guest channel; define its configuration transport, readiness protocol, and
+   behavior when it is unavailable.
+6. Define capability classes for every Compose attribute: syntax-only,
+   configuration-time, VM runtime, platform-dependent, unsupported, or
+   invalid. Set warning and strict-mode behavior.
+7. Publish explicit non-goals and a compatibility matrix so “100% compatible”
+   has measurable meaning instead of implying that container and VM semantics
+   are identical.
+
+**Exit condition:** product decisions above are written down and are reflected
+in user-facing compatibility promises.
+
+### Phase 1 — Establish the Quocker code and build integration
+
+1. Decide which Quocker code belongs in QEMU's `scripts/` tree and which
+   components should be independent modules or a separate package.
+2. Set the native language and dependency policy. The CLI is C and uses GLib,
+   libyaml, libcurl, json-glib, libarchive, and OpenSSL; define supported library
+   versions and behavior when optional dependencies are absent.
+3. Make Quocker an intentional optional Meson feature or install component,
+   with clear configure output and packaging rules. Avoid making the normal
+   QEMU build fail when Quocker dependencies are unavailable unless enabled.
+4. Define public CLI/API boundaries between the Compose frontend and QEMU
+   process management. Keep configuration parsing separate from side effects.
+5. Add version reporting, structured diagnostics, logging levels, exit-code
+   conventions, shell completions, and man-page generation.
+6. Add licensing, contribution, code ownership, and security-review notes for
+   the new files.
+
+### Phase 2 — Implement the Compose configuration model
+
+1. Use the pinned schema and a parser that follows Docker Compose's YAML
+   behavior. Validate the full document, not just that `services` is a mapping.
+2. Implement canonical filename precedence and discovery, `-f`, `COMPOSE_FILE`,
+   path separators, standard input, `--project-directory`, and the documented
+   project-name rules.
+3. Implement `.env`, repeated `--env-file`, environment precedence, quoting,
+   comments, unset variables, and the full Compose interpolation grammar,
+   including nested defaults, required forms, `$$`, and interpolation only
+   where the specification requires it.
+4. Keep project interpolation distinct from per-service `environment` and
+   `env_file` processing. Resolve all relative paths using the correct base
+   file/project rules.
+5. Implement multi-file merge semantics by field, including short/long form
+   expansion, unique resources, volume target matching, command replacement,
+   `!reset`, and `!override`.
+6. Implement reusable fragments and extensions, YAML anchors, `include`, and
+   service `extends` with the correct file and path scopes.
+7. Validate top-level services, networks, volumes, configs, secrets, and every
+   service attribute from the pinned schema. Report unknown and unsupported
+   fields with file and field paths; support strict and permissive policies.
+8. Implement profiles, project name resolution, Compose normalization, and
+   deterministic `config` output, including quiet, JSON, environment, and path
+   resolution modes where compatible. Basic `config --format yaml|json` output
+   is now available; schema-aware normalization and other output modes remain.
+9. Maintain the custom `x-quocker` namespace separately from Compose fields;
+   version it and validate it just as strictly.
+
+### Phase 3 — Reach useful Compose CLI compatibility
+
+1. Inventory the pinned Docker Compose command and flag surface and label each
+   command as VM-equivalent, adaptable, informational, or intentionally
+   unsupported.
+2. Complete core commands and their normal flags: `up`, `down`, `ps`, `logs`,
+   `config`, `start`, `stop`, `restart`, `kill`, `rm`, `pause`, `unpause`,
+   `pull`, `build`, `create`, `run`, `exec`, `cp`, `port`, `events`, `top`,
+   `wait`, `images`, `ls`, and `version`. `start`, `stop`, `restart`, `kill`,
+   `pause`, and `unpause` now have initial saved-VM process handling; pause and
+   resume use QMP, and the fake-QEMU integration test exercises these commands.
+   Crash recovery and complete flag compatibility remain unfinished. Implement only after Phase 0 defines
+   VM semantics; explain commands with no meaningful VM equivalent.
+   `port SERVICE PRIVATE_PORT[/PROTOCOL]` now reports configured static host
+   bindings through the validated QEMU mapping parser. Dynamic host-port
+   allocation remains unsupported and fails during `up` preflight.
+3. **Partially implemented:** `up` selects required `depends_on` dependencies,
+   orders them before dependents, and rejects cycles and missing required
+   services. Short syntax and long syntax with `service_started` work;
+   `up --dry-run` exposes startup order and `down --dry-run` exposes reverse
+   teardown order. Guest health/completion conditions and
+   dependency restart behavior await guest readiness and recreation tracking.
+   Still support profiles, scaling where
+   appropriate, recreation policies, orphan handling, timeout handling, and
+   interruption/signals.
+4. Match project naming, labels/metadata, project listing, working directory,
+   file precedence, exit codes, and common output/TTY behavior.
+5. Support both `quocker compose ...` and any chosen direct aliases without
+   confusing global and subcommand flags.
+6. Specify behavior for Docker Compose integrations or plugins (`watch`,
+   `convert`, `alpha`, and future commands); do not silently advertise
+   compatibility for unimplemented commands.
+
+### Phase 4 — Define images and guest lifecycle
+
+1. Build a VM image model with explicit architecture, firmware, machine type,
+   CPU model, acceleration, boot device, and guest OS requirements.
+2. **Partially implemented:** OCI registry acquisition for Docker Hub and
+   per-registry HTTPS mirror mappings from `$XDG_CONFIG_HOME/quocker/registries.json`,
+   plus the backward-compatible global mirror environment override. Bearer
+   challenge token requests, platform manifest selection, bounded HTTPS
+   redirect handling, and verified config/layer blob caching, a 20 GiB default
+   aggregate cache limit, and `quocker prune`. Pruning records per-service
+   overlay/base-disk references, retains complete OCI manifest/config/layer
+   blobs plus rootfs and ext4 base data for referenced overlays, and removes
+   unreferenced content. Stale references are reconciled. Unmarked legacy base
+   disks are kept for safety. Inline
+   credentials from Docker CLI `config.json` auths
+   are sent only to the matching HTTPS token realm; external credential
+   helpers and `credsStore`/`credHelpers` executables in `PATH` are supported
+   through bounded, timed, direct subprocess execution. Reference-aware
+   pruning now records per-service overlay/base-disk leases and keeps base
+   disks and OCI image content while corresponding overlays exist; unreferenced
+   staged trees and compressed blobs remain reclaimable. Unmarked legacy disks
+   remain protected until that VM is started and Quocker records its reference.
+  Bounded retries now cover transient connection failures and HTTP 408, 425,
+   429, and selected 5xx responses; ``Retry-After`` is honored up to 30 seconds
+   with bounded exponential fallback. Remaining work: broader migration/reconciliation coverage, authenticated
+   mirror-specific credentials, and additional registry conformance coverage.
+3. Finish the OCI registry acquisition requirements: Docker Hub and configured mirrors,
+   registry authentication, platform-specific index selection, content
+   negotiation, digest/size verification, and safe handling
+   of cross-host blob redirects. Store immutable blobs by digest with bounded,
+   inspectable cache and explicit prune/quota controls.
+4. **Partially implemented:** OCI layer tar changesets are materialized into a
+   staging rootfs with whiteout behavior, directory-relative path/symlink
+   protections, entry/expanded-size limits, digest-addressed staging, and
+   rollback on extraction failure. OCI UID/GID/mode and extended attributes
+   are retained in Quocker user xattrs. Character/block devices and FIFOs use
+   inert placeholder files with guest type/device metadata; sockets remain
+   unsupported. A C converter now builds a raw ext4 image with mke2fs and
+   libext2fs, restoring guest ownership, mode, and OCI xattrs without creating
+   host device nodes. The converter maps staged character/block devices and
+   FIFOs to ext4 special inodes, and `pull` stores the converted guest disk
+   beside the manifest-addressed rootfs after cache-quota preflight. OCI `up`
+   now invokes disk conversion when needed. Broader malicious-archive and
+   compression fixtures, plus rootfs provenance, remain open.
+   Add broader malicious-archive and compression fixtures, and preserve rootfs
+   provenance in metadata.
+5. **Partially implemented:** a C kernel catalog selector matches OS,
+   architecture, and variant, prefers exact distro IDs over `ID_LIKE` family
+   matches and generic entries, permits an explicit catalog ID, and verifies
+   selected kernel/initrd SHA-256 digests. Version 1 catalogs require detached
+   Ed25519 signatures and are trusted through a protected local public key.
+   `pull`, `quocker kernel select`, and OCI `up` apply local catalog selection.
+   A statically linked guest-init program
+   mounts the ext4 root, applies the OCI user/working directory/environment,
+   launches the command as a child, forwards signals, reaps children, and
+   reports readiness/exit on serial. A C initrd builder appends this init and a
+   bounded runtime config to the digest-verified catalog initrd. Remaining
+   work: provision trust keys, maintain kernel/initrd assets and catalog
+   updates, implement guest network configuration, and report structured
+   readiness/shutdown to host state. OCI `up` currently relies on QEMU user
+   networking and a guest DHCP kernel command line.
+6. Kernel selection must be inspectable and overrideable. OCI metadata does not
+   specify a kernel or boot process, so image-specific automatic detection is
+   heuristic: architecture and OS are reliable inputs, while distro identity
+   may be absent (especially in distroless images). Provide generic-kernel
+   fallback, explicit kernel pinning, validation/boot probes, and a clear error
+   when no supported kernel/init combination exists; never imply perfect
+   per-image kernel inference.
+7. Map OCI image config fields (Env, WorkingDir, User, Entrypoint, and Cmd)
+   into VM guest launch configuration. Translate declared Volumes into
+   explicit VM disks or reject them with an actionable diagnostic. Document
+   where VM behavior intentionally differs from Docker container behavior.
+8. Implement `build` only with a specified reproducible guest-image build
+   format and cache policy. A Dockerfile may be reused only through a defined
+   Quockerfile subset whose filesystem-changing steps run in disposable build
+   VMs; Quocker must not start a container runtime to build or run images.
+9. Implement guest provisioning for commands, environment, users, hostnames,
+   files, and boot configuration. Support idempotence, retries, guest-agent
+   readiness, and safe secret delivery.
+10. Define QEMU acceleration fallback (KVM versus TCG), host capability checks,
+   architecture emulation, firmware delivery, and diagnostics for boot failure.
+11. Implement service readiness and health states, dependency ordering,
+   restart policies, graceful shutdown, and startup rollback.
+
+### Phase 5 — Build the storage model and lifecycle controls
+
+1. Define the VM root disk, immutable base images, qcow2 overlay chains,
+   named Compose volumes, anonymous volumes, bind mounts, tmpfs, and read-only
+   storage mappings.
+2. Map volume short/long syntax, drivers, options, external resources, and
+   project scoping. Translate only semantics that can be implemented safely
+   for a guest.
+3. Implement inspect/list/create/remove/prune operations with previews,
+   ownership metadata, confirmation where destructive, and recovery guidance.
+4. Add explicit disk quotas and configurable retention/GC. Prevent invisible
+   unbounded cache growth; show per-project and per-image disk usage.
+5. Handle backing-chain compaction, snapshots, consistency, concurrent access,
+   locks, crash recovery, image migration, and safe deletion.
+6. Define encryption-at-rest and secret handling for base disks, overlays,
+   volume content, and provisioning data.
+
+### Phase 6 — Implement networking as a first-class VM feature
+
+1. Define isolated project networks, default networking, service DNS names,
+   aliases, DHCP, and inter-service connectivity.
+2. **Partially implemented:** translate short and long port mappings, equal-
+   sized numeric ranges, TCP/UDP protocols, and numeric IPv4 host IPs to QEMU
+   user networking. IPv6 host bindings are rejected because QEMU's current
+   user-network host-forward parser does not support them. Remaining: dynamic
+   host ports, conflict detection, and broader syntax fixtures.
+3. Select and document backends (QEMU user networking, bridge/tap, or another
+   backend) with install and privilege requirements. Make backend choice
+   explicit and inspectable.
+4. Define `host`, `none`, external, internal, attachable, and network-driver
+   semantics; reject unsupported modes before launching any VM.
+5. Add firewall integration, least privilege, collision-safe resource names,
+   teardown on crashes, and diagnostics for host permission failures.
+6. Ensure network state is cleaned up without affecting unrelated host or QEMU
+   resources.
+
+### Phase 7 — Complete Compose resources and service settings
+
+1. Map `configs` and `secrets` into guest files with explicit ownership,
+   permissions, read-only rules, lifetime, and secure delivery.
+2. Map Compose CPU, memory, block I/O, device, security, logging, and
+   deployment resource settings to QEMU and guest controls where possible.
+3. Implement or classify each service field, including annotations, labels,
+   dependencies, health checks, logging, namespace settings, platform,
+   pull policy, scale/replicas, stop behavior, and deploy placement/update
+   policies.
+4. Make every unsupported field visible in `config` and produce actionable
+   runtime diagnostics; never silently discard settings that can change
+   observable behavior.
+5. Keep Compose fields and Quocker extensions distinguishable in output,
+   documentation, and error messages.
+
+### Phase 8 — Harden process management and security
+
+1. **Partially implemented:** new state records Linux `/proc` start-time ticks
+   and validates them with the PID and QEMU name; signals use pidfds when
+   supported and otherwise revalidate immediately before signaling. QEMU gets
+   a private per-VM QMP socket for pause/resume. Close the fallback race on
+   older kernels where possible, and complete stale-state recovery, QEMU crash
+   handling, daemon restarts, and concurrent CLI invocation locking.
+2. Define foreground and detached modes, console access, serial/agent logs,
+   log rotation, event streams, and cleanup on signals.
+3. Run QEMU with least privilege and a reviewed sandbox configuration. Define
+   access to KVM, host files, sockets, devices, and networking.
+4. Protect YAML parsing, interpolation, image paths, symlinks, state files,
+   lock files, generated command lines, and cleanup operations against unsafe
+   input and path traversal.
+5. Review guest/host boundaries and threat models for shared folders, device
+   passthrough, clipboard/console access, secrets, and network exposure.
+6. Add resource limits and safe failure behavior so partial stack startup,
+   disk-full conditions, and failed cleanup do not corrupt unrelated projects.
+
+### Phase 9 — Compatibility, integration, and regression coverage
+
+1. Create a pinned Compose fixture corpus covering every schema section,
+   interpolation form, merge rule, short/long syntax, extension, profile, and
+   invalid configuration class.
+2. Compare Quocker `config` output with Docker Compose's normalized model for
+   compatible fixtures; record intentional differences explicitly.
+3. Add unit tests for parser, validation, merge, path, state, storage, network,
+   and command construction logic.
+4. Add QEMU integration tests for boot, guest provisioning, health, networking,
+   storage persistence, stop/restart, cleanup, and crash recovery.
+5. Run tests with KVM and without KVM (TCG), and exercise supported host/guest
+   architectures and minimum dependency versions.
+6. Add security and failure tests for malicious YAML, unsafe paths, port
+   conflicts, interrupted launches, stale state, exhausted disk, and failed
+   QEMU/qemu-img operations.
+7. Add CI for formatting, static analysis, schema drift, tests, docs builds,
+   QEMU build configurations, and the supported distribution matrix.
+
+### Phase 10 — Documentation, packaging, and stable-QEMU maintenance
+
+1. Write a quick start and complete Quocker CLI reference, Compose support
+   matrix, VM image guide, guest provisioning guide, storage and networking
+   guides, security guide, troubleshooting guide, and migration examples.
+2. Document every semantic difference from Docker Compose, including commands
+   and fields that parse but cannot run.
+3. Package Quocker dependencies and completion/man pages for supported
+   distributions. Define uninstall behavior and preserve user VM state.
+4. Track the latest stable upstream QEMU release/branch and define a regular
+   update process: identify stable updates, rebase/cherry-pick Quocker work on
+   `quocker`, resolve conflicts, run QEMU and Quocker CI, and publish the base
+   QEMU revision. Do not develop on or merge work into QEMU `master`.
+5. Maintain a small, reviewable Quocker patch series where feasible; document
+   any changes to QEMU core separately from standalone CLI additions.
+6. Define versioning, release notes, support window, compatibility guarantees,
+   security response, and stable branch backport policy.
+
+## 4. Definition of project completion
+
+Quocker is ready to call finished only when all agreed requirements below have
+evidence and the project owner has accepted any explicit exclusions:
+
+1. A pinned current Compose schema is accepted and validated, and every field
+   has a documented capability classification.
+2. File discovery, environment handling, normalization, merge behavior, and
+   core CLI conventions match Docker Compose for the compatibility matrix.
+3. A Docker Compose file advertised as drop-in compatible runs with equivalent
+   observable behavior, or Quocker clearly identifies each required change.
+4. VM images, guest provisioning, dependencies, networks, storage, secrets,
+   health, lifecycle, cleanup, and failure recovery have supported semantics.
+5. Storage use is inspectable and bounded by the chosen policy; cleanup cannot
+   remove data outside the selected Quocker project/resources.
+6. CI covers parser compatibility, QEMU builds, VM integration, supported
+   hosts, and failure/security cases. The full documented test suite passes.
+7. Installation, upgrade, rollback, removal, documentation, and stable-QEMU
+   update procedures are reproducible.
+8. No Compose setting in the advertised support level is silently ignored,
+   and no ordinary QEMU workflow is broken by the optional interface.
+
+## 5. Review topics for this draft
+
+The owner has confirmed that container lifecycle and container runtime
+management are out of scope and that OCI image references should be converted
+to full VM guests with a supplied kernel and Quocker init. Remaining product
+choices include the Quockerfile/build semantics, kernel catalog and trust
+policy, guest-init channel, first host/guest platforms, and whether unsupported
+runtime fields fail by default. These choices still affect the later phases.

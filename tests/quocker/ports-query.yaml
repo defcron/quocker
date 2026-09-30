@@ -1,0 +1,9 @@
+services:
+  app:
+    image: ./guest.qcow2
+    ports:
+      - "127.0.0.1:8080:80"
+      - "9000-9001:9000-9001/udp"
+      - target: 444
+        published: "8443"
+        protocol: tcp

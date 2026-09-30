@@ -1,0 +1,6 @@
+services:
+  app:
+    profiles:
+      - test
+    labels:
+      io.quocker.override: merged

@@ -1,0 +1,5 @@
+services:
+  app:
+    image: ./guest.qcow2
+    ports:
+      - "80"
