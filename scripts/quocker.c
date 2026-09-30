@@ -104,6 +104,7 @@ typedef struct Options {
   gboolean config_no_interpolate;
   gboolean config_no_path_resolution;
   gboolean config_no_normalize;
+  gboolean config_no_consistency;
   int signal_number;
   gboolean remove_volumes;
   gboolean remove_orphans;
@@ -6296,6 +6297,31 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
   return TRUE;
 }
 
+static gboolean config_validate_service_dependencies(YNode *services) {
+  if (!services || services->kind != NODE_MAPPING) {
+    return TRUE;
+  }
+  UpOrder order = {0};
+  order.services = services;
+  order.marks = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  order.ordered = g_ptr_array_new();
+  order.validate_runtime_conditions = FALSE;
+  gboolean ok = TRUE;
+  for (guint i = 0; ok && i < services->items->len; i++) {
+    YPair *pair = g_ptr_array_index(services->items, i);
+    const char *name = node_string(pair->key);
+    if (!valid_service_name(name) || pair->value->kind != NODE_MAPPING) {
+      fail("invalid service definition");
+      ok = FALSE;
+    } else {
+      ok = up_order_visit(&order, name);
+    }
+  }
+  g_ptr_array_free(order.ordered, TRUE);
+  g_hash_table_destroy(order.marks);
+  return ok;
+}
+
 static gboolean for_up_services(YNode *services, Options *opts,
                                 gboolean (*callback)(const char *, YNode *,
                                                      void *),
@@ -7906,6 +7932,7 @@ static void usage(FILE *file) {
           "  config --no-interpolate    Preserve variable expressions\n"
           "  config --no-path-resolution Keep config file paths relative\n"
           "  config --no-normalize     Skip implicit default network output\n"
+          "  config --no-consistency  Skip dependency consistency checks\n"
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
@@ -8146,6 +8173,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(opts->command, "config") &&
                g_str_equal(arg, "--no-normalize")) {
       opts->config_no_normalize = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "config") &&
+               g_str_equal(arg, "--no-consistency")) {
+      opts->config_no_consistency = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
                (g_str_equal(arg, "-q") || g_str_equal(arg, "--quiet"))) {
       opts->quiet = TRUE;
@@ -9041,6 +9071,11 @@ int main(int argc, char **argv) {
   }
   if (config_variables) {
     return config_write_variables() ? 0 : 1;
+  }
+  if (g_str_equal(opts.command, "config") &&
+      !opts.config_no_consistency &&
+      !config_validate_service_dependencies(map_get(config, "services"))) {
+    return 1;
   }
   if (g_str_equal(opts.command, "config") &&
       !resolve_config_service_env_files(config, root, project_environment,

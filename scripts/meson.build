@@ -326,6 +326,20 @@ if not get_option('quocker').disabled()
     test('quocker-dependencies-missing', quocker,
          args: ['-f', files('../tests/quocker/dependencies-missing.yaml'), 'up'],
          should_fail: true, suite: ['quocker'])
+    test('quocker-config-consistency-cycle', quocker,
+         args: ['-f', files('../tests/quocker/dependencies-cycle.yaml'),
+                'config'],
+         should_fail: true, suite: ['quocker'])
+    test('quocker-config-no-consistency-cycle', quocker,
+         args: ['-f', files('../tests/quocker/dependencies-cycle.yaml'),
+                'config', '--no-consistency'], suite: ['quocker'])
+    test('quocker-config-consistency-missing', quocker,
+         args: ['-f', files('../tests/quocker/dependencies-missing.yaml'),
+                'config'],
+         should_fail: true, suite: ['quocker'])
+    test('quocker-config-no-consistency-missing', quocker,
+         args: ['-f', files('../tests/quocker/dependencies-missing.yaml'),
+                'config', '--no-consistency'], suite: ['quocker'])
     quocker_profiles_test = executable(
       'quocker-profiles-test', files('../tests/quocker/profiles-test.c'),
       dependencies: [glib])

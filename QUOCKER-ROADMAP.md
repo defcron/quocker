@@ -404,6 +404,9 @@ in user-facing compatibility promises.
    Normalized `config` output adds the implicit project default network;
    `--no-normalize` suppresses that generated output while leaving path
    resolution intact.
+   `config` checks required service dependencies and cycles by default;
+   `--no-consistency` skips those model checks while retaining schema
+   validation.
    `--no-path-resolution` preserves service env-file paths, local build and
    additional contexts, short and long bind sources, top-level config and
    secret file paths, and included or extended model paths; broader path-valued

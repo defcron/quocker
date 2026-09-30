@@ -185,11 +185,10 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
        ``--environment``, ``--variables``, ``--services``, ``--profiles``,
        ``--images``,
        ``--volumes``, ``--networks``, ``--models``, ``--no-env-resolution``,
-       ``--no-interpolate``, ``--no-normalize``, partial
+       ``--no-interpolate``, ``--no-normalize``, ``--no-consistency``, partial
        ``--no-path-resolution``, and
        Quocker-specific ``--capabilities``.
-     - ``--hash``, ``--lock-image-digests``, ``--no-consistency``, and
-       image-digest resolution.
+     - ``--hash``, ``--lock-image-digests``, and image-digest resolution.
        See the
        `Compose config reference <https://docs.docker.com/reference/cli/docker/compose/config/>`_.
    * - ``start``, ``stop``, ``restart``, ``pause``, ``unpause``
@@ -306,6 +305,9 @@ process environment values take precedence over explicit env-file values.
 by the model, including whether a variable is required and any default or
 alternate values declared with Compose's ``-``, ``:-``, ``+``, ``:+``, ``?``,
 or ``:?`` operators. It also scans included and extended Compose files.
+By default, ``config`` checks for missing required ``depends_on`` services and
+dependency cycles. ``config --no-consistency`` skips these model checks while
+still validating the Compose schema.
 By default, rendered config adds Compose's implicit ``default`` network when
 one or more services have no explicit network attachment. The generated
 network name is project-scoped. ``config --no-normalize`` suppresses this
