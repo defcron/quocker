@@ -24,3 +24,6 @@ configs:
 secrets:
   app-secret:
     file: ./secret.txt
+models:
+  vision:
+    model: vision-model

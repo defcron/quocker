@@ -40,6 +40,7 @@ int main(int argc, char **argv) {
       "guest\thealthcheck.test[0]\tunsupported",
       "RESOURCE\tNAME\tSTATUS",
       "configs\tapp-config\tunsupported; not provisioned into guests",
+      "models\tvision\tunsupported; AI models are not provisioned into guests",
       "networks\tfrontend\tpartially supported QEMU user networking; "
       "named networks unsupported",
       "secrets\tapp-secret\tunsupported; not provisioned into guests",

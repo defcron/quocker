@@ -13,3 +13,6 @@ volumes:
 networks:
   frontend: {}
   backend: {}
+models:
+  vision: {model: vision-model}
+  llama: {model: llama3}

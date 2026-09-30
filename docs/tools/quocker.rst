@@ -183,8 +183,9 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
    * - ``config``
      - ``--format yaml|json``, ``-o``/``--output FILE``, ``--quiet``,
        ``--environment``, ``--services``, ``--profiles``, ``--images``,
-       ``--volumes``, ``--networks``, and Quocker-specific ``--capabilities``.
-     - ``--hash``, ``--lock-image-digests``, ``--models``, ``--variables``,
+       ``--volumes``, ``--networks``, ``--models``, and Quocker-specific
+       ``--capabilities``.
+     - ``--hash``, ``--lock-image-digests``, ``--variables``,
        ``--no-consistency``, ``--no-env-resolution``, ``--no-interpolate``,
        ``--no-normalize``, ``--no-path-resolution``, and image-digest
        resolution. See the
@@ -276,8 +277,9 @@ with the field name in the error, after preflighting every selected service
 and before starting any VM. Nested service values are listed by their YAML
 path and inherit the containing service field's status. A second
 ``RESOURCE`` table reports declared top-level
-``volumes``, ``networks``, ``configs``, and ``secrets`` with their current VM
-runtime status, including unsupported guest config and secret provisioning.
+``volumes``, ``networks``, ``configs``, ``secrets``, and ``models`` with their
+current VM runtime status, including unsupported guest config, secret, and AI
+model provisioning.
 Quocker also reads ``COMPOSE_FILE``, ``COMPOSE_PATH_SEPARATOR``,
 ``COMPOSE_PROJECT_NAME`` and ``COMPOSE_PROFILES``. The file format is intended
 to be a broad Compose-compatible superset, but the QEMU runtime does not
@@ -292,8 +294,9 @@ written to ``name`` in ``config`` output and exposed as
 ``COMPOSE_PROJECT_NAME`` during file interpolation.
 
 ``config --services``, ``config --profiles``, ``config --images``,
-``config --volumes``, and ``config --networks`` print the corresponding names
-one per line in sorted order. Repeated profile names are emitted once.
+``config --volumes``, ``config --networks``, and ``config --models`` print the
+corresponding names one per line in sorted order. Repeated profile names are
+emitted once.
 ``config --environment`` prints the merged process and
 environment-file values used for interpolation as sorted ``KEY=VALUE`` lines;
 process environment values take precedence over explicit env-file values.

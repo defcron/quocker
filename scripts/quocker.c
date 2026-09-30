@@ -1698,6 +1698,8 @@ static gboolean config_write_capabilities(const YNode *config,
     } else if (g_strcmp0(kind, "configs") == 0 ||
                g_strcmp0(kind, "secrets") == 0) {
       status = "unsupported; not provisioned into guests";
+    } else if (g_strcmp0(kind, "models") == 0) {
+      status = "unsupported; AI models are not provisioned into guests";
     }
     if (!status || pair->value->kind != NODE_MAPPING) {
       continue;
@@ -7194,7 +7196,7 @@ static void usage(FILE *file) {
           "  config --format yaml|json   Select config output format\n"
           "  config -o, --output FILE   Write rendered config to a file\n"
           "  config --services|--profiles|--images  List config entries\n"
-          "  config --volumes|--networks   List declared resources\n"
+          "  config --volumes|--networks|--models List declared resources\n"
           "  config --capabilities       Report service-field support\n"
           "  config --environment        Print interpolation environment\n"
           "      --dry-run              Print the dependency-ordered lifecycle "
@@ -7499,6 +7501,7 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
                 g_str_equal(arg, "--services") ||
                 g_str_equal(arg, "--profiles") ||
                 g_str_equal(arg, "--images") ||
+                g_str_equal(arg, "--models") ||
                 g_str_equal(arg, "--volumes") ||
                 g_str_equal(arg, "--networks") ||
                 g_str_equal(arg, "--capabilities"))) {

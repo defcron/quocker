@@ -370,7 +370,9 @@ in user-facing compatibility promises.
    present in the configuration as QEMU-mapped, partially supported,
    OCI-workload-only, unsupported, Quocker-specific, selection-only, or
    preserved-only, and separately reports declared top-level volumes,
-   networks, configs, and secrets with runtime status. Nested service-value
+   networks, configs, secrets, and models with runtime status; model
+   declarations are classified as unsupported because AI inference models are
+   not provisioned into guests. Nested service-value
    paths are also emitted and inherit their parent field's status. Runtime
    preflight now accounts for the complete pinned Compose service-field set:
    every field is mapped, partially supported, OCI-workload-only,
@@ -382,8 +384,8 @@ in user-facing compatibility promises.
    Compose resource remain.
 8. **Partially implemented:** profiles and project-name resolution work for
    service selection and interpolation. `config` emits YAML or JSON, lists
-   sorted services, profiles, images, volumes, or networks, and prints the
-   interpolation environment; `-o`/`--output` atomically writes rendered YAML
+   sorted services, profiles, images, volumes, networks, or models, and prints
+   the interpolation environment; `-o`/`--output` atomically writes rendered YAML
    or JSON. Schema-aware normalization, image resolution, path output modes,
    and the remaining Docker Compose config flags remain.
 9. **Partially implemented:** service-level `x-quocker` is versioned as

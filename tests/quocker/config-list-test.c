@@ -29,5 +29,6 @@ int main(int argc, char **argv) {
                     "registry.example/zeta:latest\n");
   assert_cli_output(cli, argv[1], "--volumes", "cache\ndata\n");
   assert_cli_output(cli, argv[1], "--networks", "backend\nfrontend\n");
+  assert_cli_output(cli, argv[1], "--models", "llama\nvision\n");
   return 0;
 }
