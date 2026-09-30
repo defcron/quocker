@@ -6432,12 +6432,17 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
 typedef struct ListContext {
   const char *project;
   const char *directory;
+  gboolean quiet;
 } ListContext;
 
 static gboolean ps_one(const char *name, YNode *service, void *data) {
   ListContext *ctx = data;
   pid_t pid = read_pid(ctx->directory, name);
   gboolean active = process_running(pid, ctx->project, name, state_process_start_time(ctx->directory, name));
+  if (ctx->quiet) {
+    g_print("%s-%s\n", ctx->project, name);
+    return TRUE;
+  }
   char *disk = find_service_overlay(ctx->directory, name);
   char *pid_text = active ? g_strdup_printf("%d", pid) : g_strdup("-");
   g_print("%s-%s\t%s\t%s\t%s\n", ctx->project, name,
@@ -6969,7 +6974,11 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(arg, "-f") &&
                g_str_equal(opts->command, "rm")) {
       /* Docker Compose's rm --force is accepted as a no-op here. */
-    } else if (opts->command && g_str_equal(arg, "--quiet")) {
+    } else if (opts->command && g_str_equal(opts->command, "config") &&
+               g_str_equal(arg, "--quiet")) {
+      opts->quiet = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "ps") &&
+               (g_str_equal(arg, "-q") || g_str_equal(arg, "--quiet"))) {
       opts->quiet = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "version") &&
                g_str_equal(arg, "--short")) {
@@ -7683,8 +7692,10 @@ int main(int argc, char **argv) {
                            opts.dry_run};
     ok = for_down_services(services, &opts, down_one, &context);
   } else if (g_str_equal(opts.command, "ps")) {
-    g_print("NAME\tSTATE\tPID\tDISK\n");
-    ListContext context = {project_lower, directory};
+    if (!opts.quiet) {
+      g_print("NAME\tSTATE\tPID\tDISK\n");
+    }
+    ListContext context = {project_lower, directory, opts.quiet};
     ok = for_services(services, &opts, ps_one, &context);
   } else if (g_str_equal(opts.command, "images")) {
     g_print("SERVICE\tIMAGE\tVM_STATE\n");

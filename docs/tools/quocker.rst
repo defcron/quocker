@@ -122,9 +122,103 @@ treated as successful.
      - Docker Compose experimental commands and conversion tools have no
        Quocker equivalent yet.
 
-This command inventory does not describe option parity. The shared options
-and each command's supported flags are documented below; unimplemented
-commands remain outside Quocker's compatibility claims.
+This command inventory does not describe option parity. The flag matrix below
+records the implemented Quocker option surface against the official Compose
+references checked on 2026-09-30. A flag is listed as supported only where it
+has an implemented VM behavior; accepted no-op flags are not compatibility
+claims. Docker-specific flags without a VM equivalent remain unsupported.
+
+.. list-table:: Quocker options and Compose flag gaps
+   :header-rows: 1
+   :widths: 16 42 42
+
+   * - Command
+     - Quocker options with behavior
+     - Not implemented from Docker Compose
+   * - Global
+     - ``-h``, ``--help``, repeatable ``-f``/``--file``, ``-p``/
+       ``--project-name``, ``--project-directory``, repeatable
+       ``--env-file``, repeatable ``--profile``. ``--dry-run`` applies to
+       supported lifecycle commands.
+     - ``--ansi``, ``--compatibility``, ``--parallel``, ``--progress``.
+       Docker's global ``--all-resources`` has no VM equivalent.
+   * - ``up``
+     - ``-d``/``--detach``, ``--wait``, ``--wait-timeout SECONDS``,
+       ``--dry-run``, and service names.
+     - Build, pull-policy, recreate, attach selection, orphan-removal,
+       scaling, timeout, menu, watch, and interactive confirmation options.
+       See the `Compose up reference <https://docs.docker.com/reference/cli/docker/compose/up/>`_.
+   * - ``down``
+     - ``--volumes``/``-v``, ``--dry-run``, and service names.
+     - ``--remove-orphans``, ``--rmi``, and ``-t``/``--timeout``. See the
+       `Compose down reference <https://docs.docker.com/reference/cli/docker/compose/down/>`_.
+   * - ``ps``
+     - Service names; output is a Quocker VM table with saved state, PID,
+       and disk path. ``-q``/``--quiet`` prints generated VM names, one per
+       line.
+     - ``--all``, ``--filter``, ``--format``, ``--no-trunc``, ``--orphans``,
+       ``--services``, and ``--status``. Project selection uses Quocker's
+       shared ``-p``/``--project-name`` option. See the
+       `Compose ps reference <https://docs.docker.com/reference/cli/docker/compose/ps/>`_.
+   * - ``logs``
+     - Service names, ``-f``/``--follow``, ``-n``/``--tail N`` (including
+       ``all``), and ``--no-log-prefix``.
+     - ``--index``, ``--no-color``, ``--since``, ``--timestamps``, and
+       ``--until``. See the
+       `Compose logs reference <https://docs.docker.com/reference/cli/docker/compose/logs/>`_.
+   * - ``config``
+     - ``--format yaml|json``, ``-o``/``--output FILE``, ``--quiet``,
+       ``--environment``, ``--services``, ``--profiles``, ``--images``,
+       ``--volumes``, ``--networks``, and Quocker-specific ``--capabilities``.
+     - ``--hash``, ``--lock-image-digests``, ``--models``, ``--variables``,
+       ``--no-consistency``, ``--no-env-resolution``, ``--no-interpolate``,
+       ``--no-normalize``, ``--no-path-resolution``, and image-digest
+       resolution. See the
+       `Compose config reference <https://docs.docker.com/reference/cli/docker/compose/config/>`_.
+   * - ``start``, ``stop``, ``restart``, ``pause``, ``unpause``
+     - Service names; ``--dry-run`` for lifecycle planning.
+     - Docker's timeout, attach, and interactive controls. These commands
+       manage existing QEMU processes and do not create containers.
+   * - ``kill``
+     - Service names, ``-s``/``--signal SIGNAL``, and ``--dry-run``.
+     - Container-specific signal behavior and attach/output controls.
+   * - ``rm``
+     - Service names and ``-v``/``--volumes``. ``-f``/``--force`` is accepted
+       as a compatibility no-op; stopped-VM safety checks still apply.
+     - Container-only anonymous-volume and orphan handling.
+   * - ``pull``
+     - Service names; downloads OCI layers and prepares VM guest disks.
+     - ``--ignore-buildable``, ``--ignore-pull-failures``, ``--include-deps``,
+       ``--policy``, and ``-q``/``--quiet``. See the
+       `Compose pull reference <https://docs.docker.com/reference/cli/docker/compose/pull/>`_.
+   * - ``wait``
+     - Service names; waits for saved QEMU processes to stop.
+     - Container exit-code reporting and container selection options.
+   * - ``port``
+     - ``SERVICE PRIVATE_PORT[/PROTOCOL]``.
+     - Container index selection and container port semantics.
+   * - ``images``, ``volumes``
+     - ``images`` accepts service names; ``volumes`` takes no arguments.
+       Both display VM-oriented inventory.
+     - Docker image IDs, formatting, quiet output, and container volume
+       attachment details.
+   * - ``volume``
+     - ``ls``, ``df``, ``inspect NAME``, ``rm NAME``; ``rm`` accepts
+       ``--dry-run``. These are Quocker-specific VM disk management commands.
+     - Docker volume-driver, label, and container-mount options.
+   * - ``prune``, ``version``
+     - ``prune`` removes unreferenced Quocker OCI cache content; ``version``
+       accepts ``--short``.
+     - These commands have no direct Compose counterparts. Docker system-wide
+       cache controls, JSON/template formats, and engine version information
+       are not provided by Quocker.
+
+Commands shown as not implemented above (such as ``build``, ``run``,
+``exec``, and ``cp``) have no Quocker flag compatibility surface yet. The
+official references are the
+`Compose command index <https://docs.docker.com/reference/cli/docker/compose/>`_
+and the command pages linked above. This inventory is the current baseline;
+it does not promise parity for flags listed as missing.
 
 Compose file
 ------------

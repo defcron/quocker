@@ -165,6 +165,13 @@ if not get_option('quocker').disabled()
          args: [files('../tests/quocker/valid.yaml')],
          env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
          suite: ['quocker'])
+    quocker_ps_quiet_test = executable(
+      'quocker-ps-quiet-test', files('../tests/quocker/ps-quiet-test.c'),
+      dependencies: [glib])
+    test('quocker-ps-quiet', quocker_ps_quiet_test,
+         args: [files('../tests/quocker/valid.yaml')],
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     quocker_logs_tail_test = executable(
       'quocker-logs-tail-test', files('../tests/quocker/logs-tail-test.c'),
       dependencies: [glib])

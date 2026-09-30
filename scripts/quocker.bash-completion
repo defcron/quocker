@@ -40,7 +40,7 @@ _quocker() {
     command=${COMP_WORDS[command_index]}
     case $command in
         config)
-            command_options='--format -o --output --environment --services --profiles --images --volumes --networks --quiet'
+            command_options='--format -o --output --environment --services --profiles --images --volumes --networks --capabilities --quiet'
             if [[ $prev == -o || $prev == --output ]]; then
                 return
             fi
@@ -50,16 +50,25 @@ _quocker() {
             fi
             ;;
         up)
-            command_options='--dry-run -d'
-            ;;
-        start|stop|restart|pause|unpause|down)
+            command_options='--dry-run -d --wait --wait-timeout'
+        ;;
+        start|stop|restart|pause|unpause)
             command_options='--dry-run'
+            ;;
+        down)
+            command_options='--dry-run --volumes -v'
+            ;;
+        ps)
+            command_options='-q --quiet'
             ;;
         rm)
             command_options='--volumes -v -f'
             ;;
         logs)
-            command_options='-f'
+            command_options='-f --follow -n --tail --no-log-prefix'
+            if [[ $prev == -n || $prev == --tail ]]; then
+                return
+            fi
             ;;
         version)
             command_options='--short'

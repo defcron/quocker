@@ -88,7 +88,7 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 74 focused tests; its latest run reported 48
+  Meson suite currently has 75 focused tests; its latest run reported 49
   passes, 26 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
@@ -382,11 +382,13 @@ in user-facing compatibility promises.
 
 ### Phase 3 — Reach useful Compose CLI compatibility
 
-1. **Command inventory documented; flag inventory open.** The Quocker manual
-   maps the current Docker Compose CLI command set to implemented VM-adapted,
-   partial, or unimplemented Quocker behavior. Record the option surface and
-   precise per-command flag parity next, using the dated upstream CLI reference
-   linked from the manual.
+1. **Command and flag inventories documented; full parity remains open.** The
+   Quocker manual maps the current Docker Compose CLI command set to VM-adapted,
+   partial, or unimplemented behavior and records the implemented per-command
+   options plus the major unsupported options, using official CLI references
+   checked on 2026-09-30. `ps -q`/`--quiet` now prints generated VM names, with
+   regression coverage. Keep this inventory current as flags are implemented;
+   fill in exact option-by-option coverage for less common Compose commands.
 2. Complete core commands and their normal flags: `up`, `down`, `ps`, `logs`,
    `config`, `start`, `stop`, `restart`, `kill`, `rm`, `pause`, `unpause`,
    `pull`, `build`, `create`, `run`, `exec`, `cp`, `port`, `events`, `top`,
