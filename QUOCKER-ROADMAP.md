@@ -121,8 +121,8 @@ has a meaningful VM equivalent.
   `x-quocker` version 1 now validates allowed fields and value types at config
   load time, with explicit unknown-field/version rejection. A differential
   check against Docker Compose 5.5.1 covers escaped dollars and set, unset,
-  and empty values with `:-`; Quocker retains `$$` in rendered config while
-  retaining the single-dollar runtime value.
+  and empty values across `:-`, `-`, `+`, and `:+`; Quocker retains `$$` in
+  rendered config while retaining the single-dollar runtime value.
   Phase 3 now orders
   selected services after their `depends_on` dependencies and offers
   `up --dry-run`; optional dependencies marked `required: false` warn and skip
@@ -334,9 +334,9 @@ in user-facing compatibility promises.
    precedence, quoting, comments, unset variables, nested defaults, required
    forms, `$$`, and interpolation only where the specification requires it are
    supported. Targeted comparison covers set, unset, and empty values with
-   `:-`, and config rendering preserves escaped dollars while runtime values
-   contain a literal dollar. Exhaustive compatibility fixtures and remaining
-   env-file edge cases are open.
+   `:-`, `-`, `+`, and `:+`, and config rendering preserves escaped dollars
+   while runtime values contain a literal dollar. Exhaustive compatibility
+   fixtures and remaining env-file edge cases are open.
 4. Keep project interpolation distinct from per-service `environment` and
    `env_file` processing. Resolve all relative paths using the correct base
    file/project rules.

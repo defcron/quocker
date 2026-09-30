@@ -45,6 +45,32 @@ int main(int argc, char **argv) {
   g_assert_cmpstr(json_object_get_string_member(environment,
                                                 "QUOCKER_DEFAULT_EMPTY"),
                   ==, "fallback");
+  g_assert_cmpstr(json_object_get_string_member(
+                      environment, "QUOCKER_DEFAULT_SET_NO_COLON"),
+                  ==, "present");
+  g_assert_cmpstr(json_object_get_string_member(
+                      environment, "QUOCKER_DEFAULT_MISSING_NO_COLON"),
+                  ==, "fallback");
+  g_assert_cmpstr(json_object_get_string_member(
+                      environment, "QUOCKER_DEFAULT_EMPTY_NO_COLON"),
+                  ==, "");
+  g_assert_cmpstr(json_object_get_string_member(environment, "QUOCKER_PLUS_SET"),
+                  ==, "yes");
+  g_assert_cmpstr(json_object_get_string_member(
+                      environment, "QUOCKER_PLUS_MISSING"),
+                  ==, "");
+  g_assert_cmpstr(json_object_get_string_member(environment,
+                                                "QUOCKER_PLUS_EMPTY"),
+                  ==, "yes");
+  g_assert_cmpstr(json_object_get_string_member(
+                      environment, "QUOCKER_COLON_PLUS_SET"),
+                  ==, "yes");
+  g_assert_cmpstr(json_object_get_string_member(
+                      environment, "QUOCKER_COLON_PLUS_MISSING"),
+                  ==, "");
+  g_assert_cmpstr(json_object_get_string_member(
+                      environment, "QUOCKER_COLON_PLUS_EMPTY"),
+                  ==, "");
 
   g_object_unref(parser);
   g_free(stderr_text);
