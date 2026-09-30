@@ -360,10 +360,11 @@ in user-facing compatibility promises.
    present in the configuration as QEMU-mapped, partially supported,
    OCI-workload-only, unsupported, Quocker-specific, selection-only, or
    preserved-only, and separately reports declared top-level volumes,
-   networks, configs, and secrets with runtime status. Classification inside
-   nested values, source-aware reporting for other schema diagnostics, strict
-   versus permissive handling, and exhaustive reporting for every Compose
-   resource remain.
+   networks, configs, and secrets with runtime status. Nested service-value
+   paths are also emitted and inherit their parent field's status; per-leaf
+   runtime classifications, source-aware reporting for other schema
+   diagnostics, strict versus permissive handling, and exhaustive reporting
+   for every Compose resource remain.
 8. **Partially implemented:** profiles and project-name resolution work for
    service selection and interpolation. `config` emits YAML or JSON, lists
    sorted services, profiles, images, volumes, or networks, and prints the

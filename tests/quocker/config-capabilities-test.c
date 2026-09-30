@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
       "guest\tcommand\tOCI guest workload setting",
       "guest\tworking_dir\tOCI guest workload setting",
       "guest\thealthcheck\tunsupported",
+      "guest\thealthcheck.test[0]\tunsupported",
       "RESOURCE\tNAME\tSTATUS",
       "configs\tapp-config\tunsupported; not provisioned into guests",
       "networks\tfrontend\tpartially supported QEMU user networking; "

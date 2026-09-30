@@ -1488,6 +1488,33 @@ static const char *service_field_capability(const char *field,
   return "preserved-only; no runtime behavior implemented";
 }
 
+static void capability_add_nested_rows(GPtrArray *rows, const char *service,
+                                       const char *path, const char *status,
+                                       const YNode *node) {
+  if (node->kind == NODE_MAPPING && node->items->len) {
+    for (guint i = 0; i < node->items->len; i++) {
+      YPair *pair = g_ptr_array_index(node->items, i);
+      const char *key = node_string(pair->key);
+      if (key) {
+        char *nested_path = g_strdup_printf("%s.%s", path, key);
+        capability_add_nested_rows(rows, service, nested_path, status,
+                                   pair->value);
+        g_free(nested_path);
+      }
+    }
+  } else if (node->kind == NODE_SEQUENCE && node->items->len) {
+    for (guint i = 0; i < node->items->len; i++) {
+      char *nested_path = g_strdup_printf("%s[%u]", path, i);
+      capability_add_nested_rows(rows, service, nested_path, status,
+                                 g_ptr_array_index(node->items, i));
+      g_free(nested_path);
+    }
+  } else {
+    g_ptr_array_add(rows, g_strdup_printf("%s\t%s\t%s", service, path,
+                                          status));
+  }
+}
+
 static gboolean config_write_capabilities(const YNode *config,
                                           const char *root) {
   GPtrArray *rows = g_ptr_array_new_with_free_func(g_free);
@@ -1504,10 +1531,14 @@ static gboolean config_write_capabilities(const YNode *config,
       YPair *field_pair = g_ptr_array_index(service_pair->value->items, j);
       const char *field = node_string(field_pair->key);
       if (field) {
+        const char *status = service_field_capability(
+            field, local_image, service_pair->value);
         g_ptr_array_add(
-            rows, g_strdup_printf("%s\t%s\t%s", name, field,
-                                  service_field_capability(
-                                      field, local_image, service_pair->value)));
+            rows, g_strdup_printf("%s\t%s\t%s", name, field, status));
+        if (field_pair->value->kind != NODE_SCALAR) {
+          capability_add_nested_rows(rows, name, field, status,
+                                     field_pair->value);
+        }
       }
     }
   }
