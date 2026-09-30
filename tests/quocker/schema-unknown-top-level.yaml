@@ -1,0 +1,4 @@
+services:
+  app:
+    image: ./app.qcow2
+unknown_section: {}

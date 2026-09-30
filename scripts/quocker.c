@@ -10,6 +10,7 @@
  */
 
 #include "quocker-disk.h"
+#include "quocker-compose-schema.h"
 #include "quocker-env.h"
 #include "quocker-initrd.h"
 #include "quocker-kernel.h"
@@ -964,6 +965,40 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
     node_free(parsed);
     node_free(merged);
     merged = next;
+  }
+  const char *schema_override = g_getenv("QUOCKER_COMPOSE_SCHEMA");
+  const char *schema_path = schema_override && *schema_override
+                                ? schema_override
+                                : NULL;
+  if (!schema_path && g_file_test(QUOCKER_SCHEMA_INSTALL_PATH,
+                                  G_FILE_TEST_IS_REGULAR)) {
+    schema_path = QUOCKER_SCHEMA_INSTALL_PATH;
+  }
+  if (!schema_path && g_file_test(QUOCKER_SCHEMA_BUILD_PATH,
+                                  G_FILE_TEST_IS_REGULAR)) {
+    schema_path = QUOCKER_SCHEMA_BUILD_PATH;
+  }
+  if (!schema_path) {
+    fail("cannot find the pinned Compose schema; reinstall Quocker or set "
+         "QUOCKER_COMPOSE_SCHEMA");
+    node_free(merged);
+    g_hash_table_destroy(environment);
+    return FALSE;
+  }
+  JsonBuilder *builder = json_builder_new();
+  json_add_yaml_value(builder, merged, FALSE);
+  JsonNode *instance = json_builder_get_root(builder);
+  char *schema_error = NULL;
+  gboolean schema_valid = quocker_compose_schema_validate(
+      schema_path, instance, &schema_error);
+  json_node_free(instance);
+  g_object_unref(builder);
+  if (!schema_valid) {
+    fail("%s", schema_error ? schema_error : "Compose schema validation failed");
+    g_free(schema_error);
+    node_free(merged);
+    g_hash_table_destroy(environment);
+    return FALSE;
   }
   *config = merged;
   *environment_out = environment;

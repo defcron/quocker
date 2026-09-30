@@ -18,3 +18,4 @@ command line utilities and other standalone programs.
    qemu-vmsr-helper
    qemu-vnc
    quocker
+   ../compose-spec/README

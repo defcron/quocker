@@ -35,9 +35,12 @@ Use ``-f`` more than once to combine files in order, as with Docker Compose.
 ``--project-directory`` selects the base directory; relative paths in the
 configuration are resolved from there (or from the first Compose file).
 
-The YAML loader accepts arbitrary Compose mapping fields, extension fields,
-anchors and aliases, and Compose's ``!reset`` and ``!override`` merge tags.
-``quocker config`` retains fields it does not interpret. Environment
+The YAML loader accepts Compose extension fields, anchors and aliases, and
+Compose's ``!reset`` and ``!override`` merge tags. Every merged configuration
+is validated against the pinned Compose Specification JSON Schema installed
+with Quocker. Schema errors include the invalid field path; ``x-`` extension
+fields remain accepted. ``quocker config`` retains schema-valid fields it does
+not interpret. Environment
 interpolation supports Compose scalar values only: ``$VAR``, ``${VAR}``, nested
 default and required-value forms, and ``$$``. Unset values without a default
 warn and become empty. ``.env`` and repeated ``--env-file`` inputs support
@@ -263,8 +266,9 @@ subcommand shape (``quocker compose up``).
 ``quocker config`` parses and prints the resolved project configuration. It
 accepts ``--format yaml`` (the default) and ``--format json``. JSON output
 retains quoted scalars as strings and emits plain YAML booleans, numbers, and
-nulls as JSON primitives. It checks core structure and malformed YAML but
-does not yet validate the full Compose schema.
+nulls as JSON primitives. It validates the merged file against the pinned
+Compose schema before rendering. Schema validation checks file structure and
+syntax; it does not mean every accepted field has a VM runtime implementation.
 ``quocker up -d`` starts all services. ``quocker ps`` shows their state and
 disk overlays. ``quocker logs [SERVICE]`` shows serial output, and
 ``quocker logs -f`` follows it. ``quocker down`` stops services while retaining

@@ -18,10 +18,21 @@ if not get_option('quocker').disabled()
                               method: 'pkg-config')
   if quocker_yaml.found() and quocker_curl.found() and quocker_json.found() and \
      quocker_archive.found() and quocker_crypto.found() and quocker_ext2fs.found()
+    quocker_schema = configure_file(
+      input: '../docs/compose-spec/compose-spec.json',
+      output: 'quocker-compose-spec.json',
+      copy: true,
+      install: true,
+      install_dir: get_option('datadir') / 'quocker')
+    quocker_schema_build_path = meson.current_build_dir() / \
+      'quocker-compose-spec.json'
+    quocker_schema_install_path = get_option('prefix') / \
+      get_option('datadir') / 'quocker' / 'compose-spec.json'
     quocker_guest_init = executable(
       'quocker-guest-init', 'quocker-init.c', link_args: ['-static'],
       install: true, install_dir: get_option('libexecdir') / 'quocker')
-    quocker = executable('quocker', ['quocker.c', 'quocker-oci.c',
+    quocker = executable('quocker', ['quocker.c', 'quocker-compose-schema.c',
+                                    'quocker-oci.c',
                                     'quocker-rootfs.c', 'quocker-kernel.c',
                                     'quocker-image.c', 'quocker-disk.c',
                                     'quocker-initrd.c', 'quocker-env.c',
@@ -31,6 +42,10 @@ if not get_option('quocker').disabled()
                          dependencies: [glib, quocker_yaml, quocker_curl,
                                        quocker_json, quocker_archive,
                                        quocker_crypto, quocker_ext2fs],
+                         c_args: [
+                           '-DQUOCKER_SCHEMA_BUILD_PATH="' + quocker_schema_build_path + '"',
+                           '-DQUOCKER_SCHEMA_INSTALL_PATH="' + quocker_schema_install_path + '"',
+                         ],
                          install: true)
 
     test('quocker-help', quocker, args: ['--help'], suite: ['quocker'])
@@ -106,6 +121,25 @@ if not get_option('quocker').disabled()
          should_fail: true, suite: ['quocker'])
     test('quocker-config-invalid', quocker,
          args: ['-f', files('../tests/quocker/invalid.yaml'), 'config', '--quiet'],
+         should_fail: true, suite: ['quocker'])
+    test('quocker-schema-unknown-service-field', quocker,
+         args: ['-f', files('../tests/quocker/schema-unknown-service.yaml'),
+                'config', '--quiet'],
+         should_fail: true, suite: ['quocker'])
+    test('quocker-schema-unknown-top-level-field', quocker,
+         args: ['-f', files('../tests/quocker/schema-unknown-top-level.yaml'),
+                'config', '--quiet'],
+         should_fail: true, suite: ['quocker'])
+    test('quocker-schema-invalid-type', quocker,
+         args: ['-f', files('../tests/quocker/schema-invalid-type.yaml'),
+                'config', '--quiet'],
+         should_fail: true, suite: ['quocker'])
+    test('quocker-schema-fails-closed-on-new-keyword', quocker,
+         args: ['-f', files('../tests/quocker/valid.yaml'), 'config',
+                '--quiet'],
+         env: ['QUOCKER_COMPOSE_SCHEMA=' +
+               (meson.current_source_dir() /
+                '../tests/quocker/schema-unsupported-keyword.json')],
          should_fail: true, suite: ['quocker'])
     test('quocker-dependencies-cycle', quocker,
          args: ['-f', files('../tests/quocker/dependencies-cycle.yaml'), 'up'],

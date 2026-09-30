@@ -88,8 +88,8 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 39 focused tests; its latest run reported 24
-  passes, 15 expected failures, and no unexpected failures.
+  Meson suite currently has 43 focused tests; its latest run reported 24
+  passes, 19 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
   ownership and extended-attribute metadata, traversal and symlink-parent
@@ -109,7 +109,10 @@ has a meaningful VM equivalent.
 - **Roadmap state:** Phase 0 has a confirmed VM-only boundary and an OCI-to-VM
   design, with platform/kernel/init decisions still open. Phase 1 has a
   working optional target but still needs packaging and CLI polish; Phase 2 is
-  a partial parser with no Compose schema validation. Phase 3 now orders
+  a partial parser that validates merged YAML against the pinned Compose JSON
+  Schema 2020-12 document. Its C validator implements the assertion keywords
+  used by the pinned schema and refuses to run if the snapshot introduces an
+  unimplemented standard assertion keyword. Phase 3 now orders
   selected services after their `depends_on` dependencies and offers
   `up --dry-run`. VM lifecycle `start`, `stop`, `restart`, and `kill` commands
   now use saved QEMU process/disk state; stop preserves VM state, restart
@@ -177,14 +180,16 @@ baseline but does not yet validate files against the schema:
 
 ## 2. Current implementation inventory
 
-The working tree contains an initial native C CLI at `scripts/quocker.c`,
+The working tree contains a native C CLI at `scripts/quocker.c` and a C
+validator at `scripts/quocker-compose-schema.c`,
 installed as an optional Meson target, with a user page at
 `docs/tools/quocker.rst`. The prototype currently:
 
 - searches for `compose.yaml`, `compose.yml`, both legacy `docker-compose`
   names, and two `quocker-compose` aliases;
-- parses YAML mappings, interpolates a subset of environment syntax, merges
-  multiple files with basic rules, retains unknown fields for `config`, and
+- parses YAML mappings, validates the merged configuration against the pinned
+  Compose schema, interpolates a subset of environment syntax, merges multiple
+  files with basic rules, retains schema-valid fields for `config`, and
   recognizes `!reset` / `!override` tags;
 - provides `up`, `down`, `rm`, `ps`, `logs`, and `config`, with direct and
   `quocker compose` command forms;
@@ -198,7 +203,7 @@ installed as an optional Meson target, with a user page at
 - stores state under `.quocker/PROJECT` and captures serial output.
 
 This is prototype groundwork, not a finished Compose implementation. It has no
-full Compose schema validation or broad compatibility fixture suite, no
+full Compose normalization or broad compatibility fixture suite, no
 Quockerfile build workflow, no real Compose volume/network model, and only
 partial file merge and interpolation semantics. The YAML reader rejects
 duplicate mapping keys and extra documents, `COMPOSE_FILE` honors
@@ -213,7 +218,7 @@ process/state recovery, cleanup, and packaging need more coverage and review.
 OCI service ``env_file`` now supports ordered path lists, interpolation,
 optional long-form files, raw format, and service-environment precedence in C;
 explicit unresolved environment entries remove image defaults. The current
-The Quocker suite contains 39 tests: 24 pass, 15 produce expected failures,
+The Quocker suite contains 43 tests: 24 pass, 19 produce expected failures,
 and none fail unexpectedly. It includes JSON config serialization, static and
 dynamic port queries, plus a fake-QEMU lifecycle integration
 test covering stop, start, down, pause, unpause, kill, state preservation, and
@@ -272,8 +277,11 @@ in user-facing compatibility promises.
 
 ### Phase 2 — Implement the Compose configuration model
 
-1. Use the pinned schema and a parser that follows Docker Compose's YAML
-   behavior. Validate the full document, not just that `services` is a mapping.
+1. **Partially implemented:** merged documents are validated against the pinned
+   Compose schema. The C validator handles every assertion keyword used by the
+   snapshot and fails closed if the schema adds a recognized but unsupported
+   JSON Schema assertion. YAML scalar resolution and merge behavior still need
+   compatibility fixtures against Docker Compose.
 2. Implement canonical filename precedence and discovery, `-f`, `COMPOSE_FILE`,
    path separators, standard input, `--project-directory`, and the documented
    project-name rules.
@@ -289,9 +297,11 @@ in user-facing compatibility promises.
    `!reset`, and `!override`.
 6. Implement reusable fragments and extensions, YAML anchors, `include`, and
    service `extends` with the correct file and path scopes.
-7. Validate top-level services, networks, volumes, configs, secrets, and every
-   service attribute from the pinned schema. Report unknown and unsupported
-   fields with file and field paths; support strict and permissive policies.
+7. **Schema validation implemented; diagnostics and policy partial.** The
+   pinned schema validates top-level resources and service attributes,
+   including nested fields and `x-` extensions. Errors include an instance
+   path, but not the source filename/line or capability classification;
+   strict versus permissive handling and unsupported-field reporting remain.
 8. Implement profiles, project name resolution, Compose normalization, and
    deterministic `config` output, including quiet, JSON, environment, and path
    resolution modes where compatible. Basic `config --format yaml|json` output
