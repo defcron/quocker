@@ -96,6 +96,7 @@ typedef struct Options {
   gboolean logs_no_prefix;
   gboolean quiet;
   gboolean ps_all;
+  GPtrArray *ps_statuses;
   gboolean short_version;
   GPtrArray *services;
 } Options;
@@ -6429,7 +6430,22 @@ typedef struct ListContext {
   const char *directory;
   gboolean quiet;
   gboolean all;
+  GPtrArray *statuses;
 } ListContext;
+
+static gboolean ps_status_matches(const ListContext *ctx, gboolean active) {
+  if (!ctx->statuses || ctx->statuses->len == 0) {
+    return TRUE;
+  }
+  for (guint i = 0; i < ctx->statuses->len; i++) {
+    const char *status = g_ptr_array_index(ctx->statuses, i);
+    if ((g_str_equal(status, "running") && active) ||
+        (g_str_equal(status, "exited") && !active)) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
 
 static gboolean ps_one(const char *name, YNode *service, void *data) {
   (void)service;
@@ -6473,7 +6489,9 @@ static gboolean ps_one(const char *name, YNode *service, void *data) {
   gboolean active = process_running(
       pid, ctx->project, name,
       state_process_start_time(ctx->directory, name));
-  if (!active && !ctx->all) {
+  if (!ps_status_matches(ctx, active) ||
+      (!active && !ctx->all &&
+       (!ctx->statuses || ctx->statuses->len == 0))) {
     g_free(disk);
     return TRUE;
   }
@@ -6839,6 +6857,8 @@ static void usage(FILE *file) {
           "  up --wait [--wait-timeout SEC] Wait for guest workloads to be ready\n"
           "  stop|restart|down -t, --timeout SEC Graceful stop timeout\n"
           "  ps -a, --all              Include stopped saved VMs\n"
+          "  ps --status running|exited Filter saved VM state\n"
+          "  ps --filter status=STATE  Filter saved VM state\n"
           "  config --format yaml|json   Select config output format\n"
           "  config -o, --output FILE   Write rendered config to a file\n"
           "  config --services|--profiles|--images  List config entries\n"
@@ -6882,10 +6902,27 @@ static gboolean parse_signal_number(const char *text, int *signal_out) {
   return FALSE;
 }
 
+static gboolean ps_add_status(Options *opts, const char *status) {
+  if (!g_str_equal(status, "running") && !g_str_equal(status, "exited")) {
+    fail("ps status '%s' is unsupported; only 'running' and 'exited' can be "
+         "mapped to saved VM state",
+         status);
+    return FALSE;
+  }
+  for (guint i = 0; i < opts->ps_statuses->len; i++) {
+    if (g_str_equal(g_ptr_array_index(opts->ps_statuses, i), status)) {
+      return TRUE;
+    }
+  }
+  g_ptr_array_add(opts->ps_statuses, g_strdup(status));
+  return TRUE;
+}
+
 static gboolean parse_options(int argc, char **argv, Options *opts) {
   opts->files = g_ptr_array_new_with_free_func(g_free);
   opts->env_files = g_ptr_array_new_with_free_func(g_free);
   opts->profiles = g_ptr_array_new_with_free_func(g_free);
+  opts->ps_statuses = g_ptr_array_new_with_free_func(g_free);
   opts->services = g_ptr_array_new_with_free_func(g_free);
   opts->signal_number = SIGKILL;
   opts->shutdown_timeout_seconds = 10;
@@ -7048,6 +7085,33 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
                (g_str_equal(arg, "-a") || g_str_equal(arg, "--all"))) {
       opts->ps_all = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "ps") &&
+               (g_str_equal(arg, "--status") ||
+                g_str_has_prefix(arg, "--status=") ||
+                g_str_equal(arg, "--filter") ||
+                g_str_has_prefix(arg, "--filter="))) {
+      gboolean filter = g_str_has_prefix(arg, "--filter");
+      const char *value = NULL;
+      if (g_str_has_prefix(arg, filter ? "--filter=" : "--status=")) {
+        value = arg + strlen(filter ? "--filter=" : "--status=");
+      } else if (++i < argc) {
+        value = argv[i];
+      }
+      if (!value || !*value) {
+        fail("ps %s requires a status value",
+             filter ? "--filter" : "--status");
+        return FALSE;
+      }
+      if (filter) {
+        if (!g_str_has_prefix(value, "status=") || !value[7]) {
+          fail("ps --filter supports only status=running or status=exited");
+          return FALSE;
+        }
+        value += strlen("status=");
+      }
+      if (!ps_add_status(opts, value)) {
+        return FALSE;
+      }
     } else if (opts->command && g_str_equal(opts->command, "version") &&
                g_str_equal(arg, "--short")) {
       opts->short_version = TRUE;
@@ -7767,7 +7831,8 @@ int main(int argc, char **argv) {
     if (!opts.quiet) {
       g_print("NAME\tSTATE\tPID\tDISK\n");
     }
-    ListContext context = {project_lower, directory, opts.quiet, opts.ps_all};
+    ListContext context = {project_lower, directory, opts.quiet, opts.ps_all,
+                           opts.ps_statuses};
     ok = for_services(services, &opts, ps_one, &context);
   } else if (g_str_equal(opts.command, "images")) {
     g_print("SERVICE\tIMAGE\tVM_STATE\n");
@@ -7825,6 +7890,7 @@ int main(int argc, char **argv) {
   g_ptr_array_free(opts.files, TRUE);
   g_ptr_array_free(opts.env_files, TRUE);
   g_ptr_array_free(opts.profiles, TRUE);
+  g_ptr_array_free(opts.ps_statuses, TRUE);
   g_ptr_array_free(opts.services, TRUE);
   g_free(opts.command);
   g_free(opts.config_format);

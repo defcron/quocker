@@ -30,6 +30,14 @@ _quocker() {
         -f|--file|-p|--project-name|--project-directory|--env-file|--profile)
             return
             ;;
+        --status)
+            COMPREPLY=( $(compgen -W 'running exited' -- "$cur") )
+            return
+            ;;
+        --filter)
+            COMPREPLY=( $(compgen -W 'status=running status=exited' -- "$cur") )
+            return
+            ;;
     esac
 
     if (( COMP_CWORD <= command_index )); then
@@ -68,7 +76,7 @@ _quocker() {
             fi
             ;;
         ps)
-            command_options='-a --all -q --quiet'
+            command_options='-a --all -q --quiet --status --filter'
             ;;
         rm)
             command_options='--volumes -v -f'

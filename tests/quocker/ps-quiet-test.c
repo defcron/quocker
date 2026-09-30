@@ -7,11 +7,13 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <string.h>
 
 static void assert_quiet_ps(const char *cli, const char *compose,
                             const char *directory, const char *option,
-                            const char *all_option, const char *expected) {
-  char *arguments[12];
+                            const char *all_option, const char *filter_option,
+                            const char *filter_value, const char *expected) {
+  char *arguments[16];
   guint i = 0;
   arguments[i++] = (char *)cli;
   arguments[i++] = (char *)"--project-directory";
@@ -23,6 +25,10 @@ static void assert_quiet_ps(const char *cli, const char *compose,
   arguments[i++] = (char *)"ps";
   if (all_option) {
     arguments[i++] = (char *)all_option;
+  }
+  if (filter_option) {
+    arguments[i++] = (char *)filter_option;
+    arguments[i++] = (char *)filter_value;
   }
   arguments[i++] = (char *)option;
   arguments[i] = NULL;
@@ -48,10 +54,11 @@ int main(int argc, char **argv) {
   GError *error = NULL;
   char *directory = g_dir_make_tmp("quocker-ps-quiet-XXXXXX", &error);
   g_assert_no_error(error);
-  assert_quiet_ps(cli, argv[1], directory, "-q", NULL, "");
-  assert_quiet_ps(cli, argv[1], directory, "--quiet", NULL, "");
-  assert_quiet_ps(cli, argv[1], directory, "-q", "-a", "");
-  assert_quiet_ps(cli, argv[1], directory, "--quiet", "--all", "");
+  assert_quiet_ps(cli, argv[1], directory, "-q", NULL, NULL, NULL, "");
+  assert_quiet_ps(cli, argv[1], directory, "--quiet", NULL, NULL, NULL, "");
+  assert_quiet_ps(cli, argv[1], directory, "-q", "-a", NULL, NULL, "");
+  assert_quiet_ps(cli, argv[1], directory, "--quiet", "--all", NULL, NULL,
+                  "");
 
   char *state_directory =
       g_build_filename(directory, ".quocker", "ps-quiet-test", NULL);
@@ -66,9 +73,37 @@ int main(int argc, char **argv) {
   g_assert_cmpint(g_chmod(state, 0600), ==, 0);
   g_assert_true(g_file_set_contents(disk, "", 0, &error));
   g_assert_no_error(error);
-  assert_quiet_ps(cli, argv[1], directory, "--quiet", "--all",
+  assert_quiet_ps(cli, argv[1], directory, "--quiet", "--all", NULL, NULL,
                   "ps-quiet-test-app\n");
-  assert_quiet_ps(cli, argv[1], directory, "-q", NULL, "");
+  assert_quiet_ps(cli, argv[1], directory, "--quiet", NULL, "--status",
+                  "exited", "ps-quiet-test-app\n");
+  assert_quiet_ps(cli, argv[1], directory, "-q", NULL, "--filter",
+                  "status=exited", "ps-quiet-test-app\n");
+  assert_quiet_ps(cli, argv[1], directory, "-q", "--all", "--status",
+                  "running", "");
+  assert_quiet_ps(cli, argv[1], directory, "-q", NULL, NULL, NULL, "");
+  char *invalid_arguments[] = {(char *)cli,
+                               (char *)"--project-directory",
+                               directory,
+                               (char *)"-f",
+                               argv[1],
+                               (char *)"ps",
+                               (char *)"--status",
+                               (char *)"paused",
+                               NULL};
+  gchar *invalid_stdout = NULL;
+  gchar *invalid_stderr = NULL;
+  gint invalid_status = 0;
+  g_assert_true(g_spawn_sync(NULL, invalid_arguments, NULL, G_SPAWN_DEFAULT,
+                             NULL, NULL, &invalid_stdout, &invalid_stderr,
+                             &invalid_status, &error));
+  g_assert_no_error(error);
+  g_assert_false(g_spawn_check_wait_status(invalid_status, &error));
+  g_assert_error(error, G_SPAWN_EXIT_ERROR, 2);
+  g_clear_error(&error);
+  g_assert_nonnull(strstr(invalid_stderr, "only 'running' and 'exited'"));
+  g_free(invalid_stdout);
+  g_free(invalid_stderr);
   g_assert_cmpint(g_unlink(state), ==, 0);
   g_assert_cmpint(g_unlink(disk), ==, 0);
   g_assert_cmpint(g_rmdir(state_directory), ==, 0);
