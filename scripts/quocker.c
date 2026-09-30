@@ -6390,6 +6390,53 @@ static gboolean ps_one(const char *name, YNode *service, void *data) {
   return TRUE;
 }
 
+typedef struct ImagesContext {
+  const char *project;
+  const char *directory;
+} ImagesContext;
+
+static gboolean images_one(const char *name, YNode *service, void *data) {
+  ImagesContext *ctx = data;
+  const char *image = service_image_reference(service);
+  const char *vm_state = "not-created";
+  char *path = state_path(ctx->directory, name);
+  struct stat state_stat;
+  if (g_lstat(path, &state_stat) == 0) {
+    pid_t pid = read_pid(ctx->directory, name);
+    char *overlay = state_disk_basename(ctx->directory, name);
+    char *overlay_path = overlay
+                             ? g_build_filename(ctx->directory, overlay, NULL)
+                             : NULL;
+    struct stat overlay_stat;
+    gboolean valid = pid > 1 && overlay_path &&
+                     g_lstat(overlay_path, &overlay_stat) == 0 &&
+                     S_ISREG(overlay_stat.st_mode);
+    if (!valid) {
+      fail("service '%s': saved VM state is malformed or unsafe; inspect it "
+           "before listing images",
+           name);
+      g_free(overlay_path);
+      g_free(overlay);
+      g_free(path);
+      return FALSE;
+    }
+    vm_state = process_running(pid, ctx->project, name,
+                               state_process_start_time(ctx->directory, name))
+                   ? "running"
+                   : "stopped";
+    g_free(overlay_path);
+    g_free(overlay);
+  } else if (errno != ENOENT) {
+    fail("service '%s': could not inspect its saved VM state: %s", name,
+         g_strerror(errno));
+    g_free(path);
+    return FALSE;
+  }
+  g_print("%s\t%s\t%s\n", name, image ? image : "(no image)", vm_state);
+  g_free(path);
+  return TRUE;
+}
+
 typedef struct WaitContext {
   const char *project;
   const char *directory;
@@ -6620,7 +6667,7 @@ static void usage(FILE *file) {
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
-          "rm, ps, logs, wait, volume ls|df|inspect|rm, "
+          "rm, ps, images, logs, wait, volume ls|df|inspect|rm, "
           "pull, prune, config, port, version [--short]\n"
           "  kill: -s SIGNAL             Signal to send (default SIGKILL)\n"
           "Kernel tools: quocker kernel select|fetch --platform OS/ARCH "
@@ -7369,6 +7416,7 @@ int main(int argc, char **argv) {
   gboolean lifecycle_operation = command_mutates_project(&opts);
   gboolean create_state_directory =
       (!g_str_equal(opts.command, "config") &&
+       !g_str_equal(opts.command, "images") &&
        !g_str_equal(opts.command, "port") &&
        !g_str_equal(opts.command, "volume")) ||
       lifecycle_operation;
@@ -7446,6 +7494,10 @@ int main(int argc, char **argv) {
     g_print("NAME\tSTATE\tPID\tDISK\n");
     ListContext context = {project_lower, directory};
     ok = for_services(services, &opts, ps_one, &context);
+  } else if (g_str_equal(opts.command, "images")) {
+    g_print("SERVICE\tIMAGE\tVM_STATE\n");
+    ImagesContext context = {project_lower, directory};
+    ok = for_services(services, &opts, images_one, &context);
   } else if (g_str_equal(opts.command, "wait")) {
     WaitContext context = {project_lower, directory};
     ok = for_services(services, &opts, wait_one, &context);

@@ -389,7 +389,9 @@ in user-facing compatibility promises.
 2. Complete core commands and their normal flags: `up`, `down`, `ps`, `logs`,
    `config`, `start`, `stop`, `restart`, `kill`, `rm`, `pause`, `unpause`,
    `pull`, `build`, `create`, `run`, `exec`, `cp`, `port`, `events`, `top`,
-   `wait`, `images`, `ls`, and `version`. `start`, `stop`, `restart`, `kill`,
+   `wait`, `ls`, and `version`. `images` lists selected services' declared
+   image references and saved VM running/stopped/not-created state. `start`,
+   `stop`, `restart`, `kill`,
    `pause`, and `unpause` now have initial saved-VM process handling; pause and
    resume use QMP, and the fake-QEMU integration test exercises these commands.
    `wait` blocks until selected VM processes stop and checks the recorded

@@ -151,6 +151,13 @@ if not get_option('quocker').disabled()
                 files('../tests/quocker/ports-dynamic.yaml')],
          env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
          suite: ['quocker'])
+    quocker_images_test = executable(
+      'quocker-images-test', files('../tests/quocker/images-test.c'),
+      dependencies: [glib])
+    test('quocker-images', quocker_images_test,
+         args: [files('../tests/quocker/valid.yaml')],
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     test('quocker-config-merge', quocker,
          args: ['-f', files('../tests/quocker/base.yaml'),
                 '-f', files('../tests/quocker/override.yaml'), 'config', '--quiet'],

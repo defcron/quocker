@@ -102,11 +102,15 @@ treated as successful.
    * - ``attach``, ``exec``, ``cp``
      - Not implemented
      - Guest agent/console transport and file-copy semantics are not available.
-   * - ``events``, ``images``, ``ls``, ``stats``, ``top``
+   * - ``images``
+     - VM-adapted, partial
+     - Lists selected services' configured image references and whether saved
+       VM state is running, stopped, or not yet created. It does not list
+       unreferenced cache entries or resolved registry digests.
+   * - ``events``, ``ls``, ``stats``, ``top``
      - Not implemented
-     - QEMU event streaming, deployed-image inventory, global project
-       discovery, guest resource statistics, and guest process listing are
-       not implemented. ``config --images`` only lists configured references.
+     - QEMU event streaming, global project discovery, guest resource
+       statistics, and guest process listing are not implemented.
    * - ``scale``, ``watch``
      - Not implemented
      - VM instance identity and safe recreation/watch behavior are not defined.
@@ -457,6 +461,11 @@ capacity, allocated disk space, and configured quota. ``quocker volume inspect
 NAME`` shows one volume's backing disk and size. ``quocker volume rm
 [--dry-run] NAME`` removes a volume from the current
 project; it refuses while a project service has a live or unverified PID.
+``quocker images [SERVICE...]`` lists each selected service's configured image
+reference and whether saved VM state is running, stopped, or not yet created.
+This command reads project state without creating a state directory; it does
+not inventory unreferenced cache entries or resolve registry references to
+digests.
 ``quocker pull`` downloads OCI manifests/config/layer blobs and
 materializes rootfs data and a raw ext4 guest disk in
 ``$XDG_CACHE_HOME/quocker/oci`` (or the platform cache directory). OCI-backed
