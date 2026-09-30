@@ -63,6 +63,9 @@ struct YNode {
   NodeKind kind;
   char *tag;
   char *scalar;
+  char *source_file;
+  guint source_line;
+  guint source_column;
   yaml_scalar_style_t scalar_style;
   GPtrArray *items;
 };
@@ -163,6 +166,7 @@ static void node_free(YNode *node) {
   }
   g_free(node->tag);
   g_free(node->scalar);
+  g_free(node->source_file);
   g_free(node);
 }
 
@@ -171,6 +175,9 @@ static YNode *node_clone(const YNode *src) {
     return NULL;
   }
   YNode *dst = node_new(src->kind, src->tag);
+  dst->source_file = g_strdup(src->source_file);
+  dst->source_line = src->source_line;
+  dst->source_column = src->source_column;
   if (src->kind == NODE_SCALAR) {
     dst->scalar = g_strdup(src->scalar);
     dst->scalar_style = src->scalar_style;
@@ -188,6 +195,13 @@ static YNode *node_clone(const YNode *src) {
     }
   }
   return dst;
+}
+
+static void node_copy_source(YNode *destination, const YNode *source) {
+  g_free(destination->source_file);
+  destination->source_file = g_strdup(source->source_file);
+  destination->source_line = source->source_line;
+  destination->source_column = source->source_column;
 }
 
 static const char *node_string(const YNode *node) {
@@ -287,7 +301,8 @@ static void map_set(YNode *map, const char *key, YNode *value) {
 
 static gboolean yaml_node_convert(yaml_document_t *document,
                                   yaml_node_t *source, YNode **result,
-                                  guint depth, char **problem);
+                                  guint depth, const char *source_file,
+                                  char **problem);
 
 static void yaml_merge_mapping_defaults(YNode *defaults,
                                         const YNode *mapping) {
@@ -302,7 +317,8 @@ static void yaml_merge_mapping_defaults(YNode *defaults,
 
 static gboolean yaml_node_convert(yaml_document_t *document,
                                   yaml_node_t *source, YNode **result,
-                                  guint depth, char **problem) {
+                                  guint depth, const char *source_file,
+                                  char **problem) {
   if (depth > 256) {
     if (problem && !*problem) {
       *problem = g_strdup("YAML aliases exceed the maximum nesting depth");
@@ -321,7 +337,8 @@ static gboolean yaml_node_convert(yaml_document_t *document,
          item < source->data.sequence.items.top; item++) {
       yaml_node_t *child = yaml_document_get_node(document, *item);
       YNode *converted = NULL;
-      if (!yaml_node_convert(document, child, &converted, depth + 1, problem)) {
+      if (!yaml_node_convert(document, child, &converted, depth + 1,
+                             source_file, problem)) {
         node_free(node);
         return FALSE;
       }
@@ -341,7 +358,7 @@ static gboolean yaml_node_convert(yaml_document_t *document,
         if (value->type == YAML_MAPPING_NODE) {
           YNode *converted = NULL;
           if (!yaml_node_convert(document, value, &converted, depth + 1,
-                                 problem)) {
+                                 source_file, problem)) {
             node_free(defaults);
             node_free(node);
             return FALSE;
@@ -358,7 +375,7 @@ static gboolean yaml_node_convert(yaml_document_t *document,
             YNode *converted = NULL;
             if (mapping->type != YAML_MAPPING_NODE ||
                 !yaml_node_convert(document, mapping, &converted, depth + 1,
-                                   problem)) {
+                                   source_file, problem)) {
               if (problem && !*problem) {
                 *problem = g_strdup("YAML merge sequences must contain mappings");
               }
@@ -381,9 +398,10 @@ static gboolean yaml_node_convert(yaml_document_t *document,
         continue;
       }
       YPair *pair = g_new0(YPair, 1);
-      if (!yaml_node_convert(document, key, &pair->key, depth + 1, problem) ||
+      if (!yaml_node_convert(document, key, &pair->key, depth + 1, source_file,
+                             problem) ||
           !yaml_node_convert(document, value, &pair->value, depth + 1,
-                             problem)) {
+                             source_file, problem)) {
         node_free(pair->key);
         node_free(pair->value);
         g_free(pair);
@@ -431,6 +449,9 @@ static gboolean yaml_node_convert(yaml_document_t *document,
   } else {
     return FALSE;
   }
+  node->source_file = g_strdup(source_file);
+  node->source_line = source->start_mark.line + 1;
+  node->source_column = source->start_mark.column + 1;
   *result = node;
   return TRUE;
 }
@@ -701,8 +722,8 @@ static gboolean interpolate_compose_values(YNode *config,
   return TRUE;
 }
 
-static gboolean yaml_parse_text(const char *text, YNode **root,
-                                char **problem) {
+static gboolean yaml_parse_text(const char *text, const char *source_file,
+                                YNode **root, char **problem) {
   yaml_parser_t parser;
   yaml_document_t document;
   if (!yaml_parser_initialize(&parser)) {
@@ -718,7 +739,8 @@ static gboolean yaml_parse_text(const char *text, YNode **root,
   }
   yaml_node_t *source = yaml_document_get_root_node(&document);
   gboolean ok =
-      source && yaml_node_convert(&document, source, root, 0, problem);
+      source && yaml_node_convert(&document, source, root, 0, source_file,
+                                  problem);
   if (!ok) {
     if (!*problem) {
       *problem = g_strdup("expected a YAML mapping without recursive aliases");
@@ -744,6 +766,60 @@ static gboolean yaml_parse_text(const char *text, YNode **root,
   }
   yaml_parser_delete(&parser);
   return ok;
+}
+
+static YNode *node_at_schema_path(YNode *root, const char *path) {
+  if (!path || path[0] != '$' || (path[1] && path[1] != '/')) {
+    return NULL;
+  }
+  if (!path[1]) {
+    return root;
+  }
+  YNode *node = root;
+  gchar **segments = g_strsplit(path + (path[1] == '/' ? 2 : 1), "/", -1);
+  for (guint i = 0; segments[i] && node; i++) {
+    char *segment = g_strdup(segments[i]);
+    /* JSON Pointer escapes are distinct from C-style backslash escapes. */
+    for (char *p = segment; *p; p++) {
+      if (*p == '~' && p[1] == '1') {
+        *p = '/';
+        memmove(p + 1, p + 2, strlen(p + 2) + 1);
+      } else if (*p == '~' && p[1] == '0') {
+        *p = '~';
+        memmove(p + 1, p + 2, strlen(p + 2) + 1);
+      }
+    }
+    if (node->kind == NODE_MAPPING) {
+      node = map_get(node, segment);
+    } else if (node->kind == NODE_SEQUENCE) {
+      char *end = NULL;
+      guint64 index = g_ascii_strtoull(segment, &end, 10);
+      node = end && !*end && index < node->items->len
+                 ? g_ptr_array_index(node->items, (guint)index)
+                 : NULL;
+    } else {
+      node = NULL;
+    }
+    g_free(segment);
+  }
+  g_strfreev(segments);
+  return node;
+}
+
+static YNode *node_at_schema_error(YNode *root, const char *error) {
+  static const char prefix[] = "Compose schema: ";
+  if (!error || !g_str_has_prefix(error, prefix)) {
+    return NULL;
+  }
+  const char *path = error + sizeof(prefix) - 1;
+  const char *end = strstr(path, ": ");
+  if (!end) {
+    return NULL;
+  }
+  char *instance_path = g_strndup(path, end - path);
+  YNode *node = node_at_schema_path(root, instance_path);
+  g_free(instance_path);
+  return node;
 }
 
 static YNode *node_merge(const YNode *base, const YNode *override,
@@ -908,6 +984,7 @@ static YNode *node_merge(const YNode *base, const YNode *override,
     if (kind == NODE_SCALAR) {
       result->scalar = g_strdup("null");
     }
+    node_copy_source(result, override);
     return result;
   }
   if (g_str_equal(override->tag, "!override")) {
@@ -920,6 +997,7 @@ static YNode *node_merge(const YNode *base, const YNode *override,
   }
   if (base->kind == NODE_MAPPING && override->kind == NODE_MAPPING) {
     YNode *result = node_clone(base);
+    node_copy_source(result, override);
     for (guint i = 0; i < override->items->len; i++) {
       YPair *incoming = g_ptr_array_index(override->items, i);
       const char *key = node_string(incoming->key);
@@ -946,6 +1024,7 @@ static YNode *node_merge(const YNode *base, const YNode *override,
       return node_clone(override);
     }
     YNode *result = node_clone(base);
+    node_copy_source(result, override);
     for (guint i = 0; i < override->items->len; i++) {
       YNode *item = g_ptr_array_index(override->items, i);
       char *incoming_key = resource_merge_key(field, item);
@@ -1621,7 +1700,7 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
       }
       YNode *included = NULL;
       char *problem = NULL;
-      gboolean ok = yaml_parse_text(contents, &included, &problem);
+      gboolean ok = yaml_parse_text(contents, absolute, &included, &problem);
       g_free(contents);
       if (!ok || !included || included->kind != NODE_MAPPING) {
         fail("invalid included Compose YAML in %s: %s", absolute,
@@ -1862,7 +1941,8 @@ static gboolean resolve_service_extends(YNode *model, const char *service_name,
       g_free(absolute_base_file);
       return FALSE;
     }
-    gboolean parsed_ok = yaml_parse_text(contents, &external_model, &problem);
+    gboolean parsed_ok = yaml_parse_text(contents, absolute_base_file,
+                                         &external_model, &problem);
     g_free(contents);
     if (!parsed_ok || !external_model || external_model->kind != NODE_MAPPING) {
       fail("service '%s': invalid extends file %s: %s", service_name,
@@ -2108,7 +2188,7 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
     }
     YNode *parsed = NULL;
     char *problem = NULL;
-    gboolean ok = yaml_parse_text(contents, &parsed, &problem);
+    gboolean ok = yaml_parse_text(contents, path, &parsed, &problem);
     g_free(contents);
     if (!ok || !parsed || parsed->kind != NODE_MAPPING) {
       fail("invalid Compose YAML in %s: %s", path ? path : "stdin",
@@ -2210,7 +2290,15 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
   json_node_free(instance);
   g_object_unref(builder);
   if (!schema_valid) {
-    fail("%s", schema_error ? schema_error : "Compose schema validation failed");
+    YNode *source = node_at_schema_error(merged, schema_error);
+    if (source && source->source_file) {
+      fail("%s:%u:%u: %s", source->source_file, source->source_line,
+           source->source_column,
+           schema_error ? schema_error : "Compose schema validation failed");
+    } else {
+      fail("%s", schema_error ? schema_error
+                              : "Compose schema validation failed");
+    }
     g_free(schema_error);
     node_free(merged);
     g_hash_table_destroy(environment);

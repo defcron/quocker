@@ -88,8 +88,8 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 48 focused tests; its latest run reported 28
-  passes, 20 expected failures, and no unexpected failures.
+  Meson suite currently has 62 focused tests; its latest run reported 40
+  passes, 22 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
   ownership and extended-attribute metadata, traversal and symlink-parent
@@ -113,7 +113,10 @@ has a meaningful VM equivalent.
   a partial parser that validates merged YAML against the pinned Compose JSON
   Schema 2020-12 document. Its C validator implements the assertion keywords
   used by the pinned schema and refuses to run if the snapshot introduces an
-  unimplemented standard assertion keyword. Phase 3 now orders
+  unimplemented standard assertion keyword. Validation errors include source
+  file, line, and column, with regressions for top-level, nested, merged, and
+  included-file errors.
+  Phase 3 now orders
   selected services after their `depends_on` dependencies and offers
   `up --dry-run`; optional dependencies marked `required: false` warn and skip
   missing or inactive-profile services. VM lifecycle `start`, `stop`,
@@ -342,11 +345,12 @@ in user-facing compatibility promises.
    cycle/depth checks. External base services are not imported into the final
    service model, and their local image and `env_file` paths are resolved from
    the declaring file.
-7. **Schema validation implemented; diagnostics and policy partial.** The
-   pinned schema validates top-level resources and service attributes,
-   including nested fields and `x-` extensions. Errors include an instance
-   path, but not the source filename/line or capability classification;
-   strict versus permissive handling and unsupported-field reporting remain.
+7. **Schema validation implemented; capability policy partial.** The pinned
+   schema validates top-level resources and service attributes, including
+   nested fields and `x-` extensions. Errors include an instance path and the
+   source YAML file, line, and column, preserved through file merges and
+   Compose includes. Capability classification, strict versus permissive
+   handling, and unsupported-field reporting remain.
 8. **Partially implemented:** profiles and project-name resolution work for
    service selection and interpolation. `config` emits YAML or JSON, lists
    sorted services, profiles, images, volumes, or networks, and prints the

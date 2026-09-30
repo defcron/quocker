@@ -56,6 +56,31 @@ if not get_option('quocker').disabled()
       rename: 'quocker')
 
     test('quocker-help', quocker, args: ['--help'], suite: ['quocker'])
+    quocker_schema_location_test = executable(
+      'quocker-schema-location-test',
+      files('../tests/quocker/schema-location-test.c'),
+      dependencies: [glib])
+    test('quocker-schema-location-top-level', quocker_schema_location_test,
+         args: [quocker,
+                files('../tests/quocker/schema-invalid-type.yaml'),
+                'schema-invalid-type.yaml:1:11: Compose schema: $/services:'],
+         suite: ['quocker'])
+    test('quocker-schema-location-service', quocker_schema_location_test,
+         args: [quocker,
+                files('../tests/quocker/schema-unknown-service.yaml'),
+                'schema-unknown-service.yaml:3:5: Compose schema: $/services/app:'],
+         suite: ['quocker'])
+    test('quocker-schema-location-merge', quocker_schema_location_test,
+         args: [quocker,
+                files('../tests/quocker/schema-location-base.yaml'),
+                files('../tests/quocker/schema-location-override.yaml'),
+                'schema-location-override.yaml:3:5: Compose schema: $/services/app:'],
+         suite: ['quocker'])
+    test('quocker-schema-location-include', quocker_schema_location_test,
+         args: [quocker,
+                files('../tests/quocker/schema-location-include.yaml'),
+                'schema-location-included.yaml:3:5: Compose schema: $/services/app:'],
+         suite: ['quocker'])
     quocker_guest_status_test = executable(
       'quocker-guest-status-test',
       [files('../tests/quocker/guest-status-test.c'),

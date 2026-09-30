@@ -43,15 +43,17 @@ The YAML loader accepts Compose extension fields, anchors and aliases, and
 Compose's ``!reset`` and ``!override`` merge tags. Every merged configuration
 is validated against the pinned Compose Specification JSON Schema installed
 with Quocker. Schema errors include the invalid field path; ``x-`` extension
-fields remain accepted. ``quocker config`` retains schema-valid fields it does
-not interpret. Environment
-interpolation supports Compose scalar values only: ``$VAR``, ``${VAR}``, nested
-default and required-value forms, and ``$$``. Unset values without a default
-warn and become empty. ``.env`` and repeated ``--env-file`` inputs support
-unquoted/double-quoted interpolation, literal single quotes, comments,
-double-quoted escapes, and unset entries; shell variables take precedence and
-later env files override earlier ones. ``COMPOSE_ENV_FILES`` selects default
-env files, and ``COMPOSE_DISABLE_ENV_FILE`` disables implicit ``.env`` loading.
+fields remain accepted. Validation errors also identify the source YAML file,
+line, and column, including errors in merged or included Compose files.
+``quocker config`` retains schema-valid fields it does not interpret.
+Environment interpolation supports Compose scalar values only: ``$VAR``,
+``${VAR}``, nested default and required-value forms, and ``$$``. Unset values
+without a default warn and become empty. ``.env`` and repeated ``--env-file``
+inputs support unquoted/double-quoted interpolation, literal single quotes,
+comments, double-quoted escapes, and unset entries; shell variables take
+precedence and later env files override earlier ones. ``COMPOSE_ENV_FILES``
+selects default env files, and ``COMPOSE_DISABLE_ENV_FILE`` disables implicit
+``.env`` loading.
 Quocker also reads ``COMPOSE_FILE``, ``COMPOSE_PATH_SEPARATOR``,
 ``COMPOSE_PROJECT_NAME`` and ``COMPOSE_PROFILES``. The file format is intended
 to be a broad Compose-compatible superset, but the QEMU runtime does not
