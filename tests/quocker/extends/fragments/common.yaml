@@ -1,0 +1,7 @@
+services:
+  common:
+    image: ./guest.qcow2
+    env_file: common.env
+    environment:
+      SOURCE: external
+      FROM_EXTENDS: external

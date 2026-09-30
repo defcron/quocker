@@ -1,0 +1,21 @@
+services:
+  base:
+    image: alpine
+    command: [echo, base]
+    environment:
+      BASE: "yes"
+      OVERRIDE: base
+    expose: [80, 81]
+  child:
+    extends:
+      service: base
+    command: [child]
+    environment:
+      OVERRIDE: child
+      CHILD: "yes"
+    expose: [81, 82]
+  external_child:
+    extends:
+      file: extends/fragments/common.yaml
+      service: common
+    command: [external]

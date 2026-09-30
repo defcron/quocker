@@ -219,8 +219,8 @@ OCI-to-VM preparation and QEMU launch are integrated, but production boot,
 process/state recovery, cleanup, and packaging need more coverage and review.
 OCI service ``env_file`` now supports ordered path lists, interpolation,
 optional long-form files, raw format, and service-environment precedence in C;
-explicit unresolved environment entries remove image defaults. The current
-The Quocker suite contains 48 tests: 28 pass, 20 produce expected failures,
+explicit unresolved environment entries remove image defaults. The Quocker
+suite contains 49 tests: 29 pass, 20 produce expected failures,
 and none fail unexpectedly. It includes JSON config serialization, static and
 dynamic port queries, plus a fake-QEMU lifecycle integration
 test covering stop, start, down, pause, unpause, kill, state preservation, and
@@ -313,8 +313,13 @@ in user-facing compatibility promises.
    file-relative lookup, project-specific `.env`/`env_file` interpolation,
    `project_directory`, and collision warnings. Included local disk image,
    service `env_file`, and top-level config/secret file paths use their
-   included project directory; broader included-service path resolution,
-   reusable fragments, and service `extends` remain unimplemented.
+   included project directory; broader included-service path resolution and
+   reusable fragments remain unimplemented. Service `extends` supports
+   same-file and external-file bases, recursive resolution, mapping merge,
+   sequence append/deduplication, Compose keyed-resource merge behavior, and
+   cycle/depth checks. External base services are not imported into the final
+   service model, and their local image and `env_file` paths are resolved from
+   the declaring file.
 7. **Schema validation implemented; diagnostics and policy partial.** The
    pinned schema validates top-level resources and service attributes,
    including nested fields and `x-` extensions. Errors include an instance

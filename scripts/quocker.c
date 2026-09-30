@@ -1582,6 +1582,277 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
   return TRUE;
 }
 
+static gboolean extends_sequence_unique(const char *field) {
+  static const char *const fields[] = {"cap_add",
+                                       "cap_drop",
+                                       "configs",
+                                       "constraints",
+                                       "preferences",
+                                       "generic_resources",
+                                       "device_cgroup_rules",
+                                       "expose",
+                                       "external_links",
+                                       "ports",
+                                       "secrets",
+                                       "security_opt",
+                                       NULL};
+  for (const char *const *item = fields; *item; item++) {
+    if (g_strcmp0(field, *item) == 0) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+static char *extends_sequence_key(const char *field, const YNode *node) {
+  if (g_strcmp0(field, "ports") == 0 || g_strcmp0(field, "volumes") == 0 ||
+      g_strcmp0(field, "configs") == 0 || g_strcmp0(field, "secrets") == 0) {
+    return resource_merge_key(field, node);
+  }
+  if (g_strcmp0(field, "devices") == 0) {
+    if (node->kind == NODE_MAPPING) {
+      return g_strdup(node_string(map_get(node, "target")));
+    }
+    if (node->kind == NODE_SCALAR) {
+      gchar **parts = g_strsplit(node->scalar ? node->scalar : "", ":", -1);
+      const char *target = g_strv_length(parts) > 1 ? parts[1] : parts[0];
+      char *key = g_strdup(target);
+      g_strfreev(parts);
+      return key;
+    }
+  }
+  if (g_str_has_prefix(field, "device_") &&
+      (g_str_has_suffix(field, "_bps") || g_str_has_suffix(field, "_iops")) &&
+      node->kind == NODE_MAPPING) {
+    return g_strdup(node_string(map_get(node, "path")));
+  }
+  return NULL;
+}
+
+static YNode *node_merge_extends(const YNode *base, const YNode *override,
+                                 const char *field) {
+  if (base->kind == NODE_MAPPING && override->kind == NODE_MAPPING) {
+    YNode *result = node_clone(base);
+    for (guint i = 0; i < override->items->len; i++) {
+      YPair *incoming = g_ptr_array_index(override->items, i);
+      const char *key = node_string(incoming->key);
+      YNode *old = key ? map_get(result, key) : NULL;
+      YNode *value = old ? node_merge_extends(old, incoming->value, key)
+                         : node_clone(incoming->value);
+      map_set(result, key ? key : "", value);
+    }
+    return result;
+  }
+  if (base->kind == NODE_SEQUENCE && override->kind == NODE_SEQUENCE) {
+    YNode *result = node_clone(base);
+    for (guint i = 0; i < override->items->len; i++) {
+      YNode *incoming = g_ptr_array_index(override->items, i);
+      char *incoming_key = extends_sequence_key(field, incoming);
+      gint existing = -1;
+      if (incoming_key) {
+        for (guint j = 0; j < result->items->len; j++) {
+          char *existing_key =
+              extends_sequence_key(field, g_ptr_array_index(result->items, j));
+          gboolean equal = g_strcmp0(incoming_key, existing_key) == 0;
+          g_free(existing_key);
+          if (equal) {
+            existing = (gint)j;
+            break;
+          }
+        }
+      }
+      if (existing >= 0) {
+        YNode *old = g_ptr_array_index(result->items, existing);
+        YNode *merged = node_merge_extends(old, incoming, NULL);
+        node_free(old);
+        g_ptr_array_index(result->items, existing) = merged;
+      } else if (extends_sequence_unique(field)) {
+        gboolean duplicate = FALSE;
+        for (guint j = 0; j < result->items->len; j++) {
+          duplicate |=
+              node_equivalent(g_ptr_array_index(result->items, j), incoming);
+        }
+        if (!duplicate) {
+          g_ptr_array_add(result->items, node_clone(incoming));
+        }
+      } else {
+        g_ptr_array_add(result->items, node_clone(incoming));
+      }
+      g_free(incoming_key);
+    }
+    return result;
+  }
+  return node_clone(override);
+}
+
+static gboolean resolve_service_extends(YNode *model, const char *service_name,
+                                        const char *origin_file,
+                                        const char *project_root,
+                                        GHashTable *environment,
+                                        GHashTable *resolution_stack,
+                                        guint depth);
+
+static gboolean resolve_service_extends(YNode *model, const char *service_name,
+                                        const char *origin_file,
+                                        const char *project_root,
+                                        GHashTable *environment,
+                                        GHashTable *resolution_stack,
+                                        guint depth) {
+  if (depth >= 64) {
+    fail("Compose extends nesting exceeds 64 services");
+    return FALSE;
+  }
+  char *identity = g_strdup_printf(
+      "%s\037%s", origin_file ? origin_file : project_root, service_name);
+  if (g_hash_table_contains(resolution_stack, identity)) {
+    fail("Compose extends cycle detected at service '%s'", service_name);
+    g_free(identity);
+    return FALSE;
+  }
+  YNode *services = map_get(model, "services");
+  YNode *service = map_get(services, service_name);
+  if (!service || service->kind != NODE_MAPPING) {
+    fail("Compose extends service '%s' was not found", service_name);
+    g_free(identity);
+    return FALSE;
+  }
+  YNode *extends = map_get(service, "extends");
+  if (!extends) {
+    g_free(identity);
+    return TRUE;
+  }
+  const char *base_name = NULL;
+  const char *base_file = NULL;
+  if (extends->kind == NODE_SCALAR) {
+    base_name = node_string(extends);
+  } else if (extends->kind == NODE_MAPPING) {
+    for (guint i = 0; i < extends->items->len; i++) {
+      YPair *pair = g_ptr_array_index(extends->items, i);
+      const char *key = node_string(pair->key);
+      if (!key || (!g_str_equal(key, "service") && !g_str_equal(key, "file"))) {
+        fail("service '%s': extends accepts only service and file",
+             service_name);
+        g_free(identity);
+        return FALSE;
+      }
+    }
+    base_name = node_string(map_get(extends, "service"));
+    YNode *file_node = map_get(extends, "file");
+    if (file_node) {
+      base_file = node_string(file_node);
+      if (!base_file || !*base_file) {
+        fail("service '%s': extends file must be a non-empty path",
+             service_name);
+        g_free(identity);
+        return FALSE;
+      }
+    }
+  }
+  if (!base_name || !*base_name) {
+    fail("service '%s': extends requires a service name", service_name);
+    g_free(identity);
+    return FALSE;
+  }
+  g_hash_table_add(resolution_stack, identity);
+
+  YNode *base_model = model;
+  YNode *external_model = NULL;
+  char *absolute_base_file = NULL;
+  if (base_file && *base_file) {
+    absolute_base_file = absolute_path(base_file, project_root);
+    gchar *contents = NULL;
+    char *problem = NULL;
+    if (!g_file_get_contents(absolute_base_file, &contents, NULL, NULL)) {
+      fail("service '%s': cannot read extends file %s", service_name,
+           absolute_base_file);
+      g_hash_table_remove(resolution_stack, identity);
+      g_free(absolute_base_file);
+      return FALSE;
+    }
+    gboolean parsed_ok = yaml_parse_text(contents, &external_model, &problem);
+    g_free(contents);
+    if (!parsed_ok || !external_model || external_model->kind != NODE_MAPPING) {
+      fail("service '%s': invalid extends file %s: %s", service_name,
+           absolute_base_file, problem ? problem : "expected a mapping");
+      g_free(problem);
+      node_free(external_model);
+      g_hash_table_remove(resolution_stack, identity);
+      g_free(absolute_base_file);
+      return FALSE;
+    }
+    gboolean prepared = interpolate_compose_values(external_model, environment);
+    if (prepared) {
+      GHashTable *include_stack =
+          g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+      prepared =
+          expand_compose_includes(external_model, absolute_base_file,
+                                  project_root, environment, include_stack, 0);
+      g_hash_table_destroy(include_stack);
+    }
+    if (!prepared) {
+      node_free(external_model);
+      g_hash_table_remove(resolution_stack, identity);
+      g_free(absolute_base_file);
+      return FALSE;
+    }
+    base_model = external_model;
+  }
+  YNode *base_services = map_get(base_model, "services");
+  YNode *base_service = map_get(base_services, base_name);
+  gboolean ok = base_service && base_service->kind == NODE_MAPPING;
+  if (!ok) {
+    fail("service '%s': extends service '%s' was not found", service_name,
+         base_name);
+  } else {
+    ok = resolve_service_extends(base_model, base_name, absolute_base_file,
+                                 project_root, environment, resolution_stack,
+                                 depth + 1);
+  }
+  if (ok) {
+    base_service = map_get(map_get(base_model, "services"), base_name);
+    if (absolute_base_file) {
+      char *base_directory = g_path_get_dirname(absolute_base_file);
+      resolve_included_service_paths(base_service, base_directory);
+      g_free(base_directory);
+    }
+    YNode *resolved = node_merge_extends(base_service, service, NULL);
+    map_remove(resolved, "extends");
+    for (guint i = 0; i < services->items->len; i++) {
+      YPair *pair = g_ptr_array_index(services->items, i);
+      if (g_strcmp0(node_string(pair->key), service_name) == 0) {
+        node_free(pair->value);
+        pair->value = resolved;
+        break;
+      }
+    }
+  }
+  node_free(external_model);
+  g_free(absolute_base_file);
+  g_hash_table_remove(resolution_stack, identity);
+  return ok;
+}
+
+static gboolean resolve_compose_extends(YNode *model, const char *project_root,
+                                        GHashTable *environment) {
+  YNode *services = map_get(model, "services");
+  if (!services || services->kind != NODE_MAPPING) {
+    return TRUE;
+  }
+  GHashTable *resolution_stack =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  gboolean ok = TRUE;
+  for (guint i = 0; ok && i < services->items->len; i++) {
+    YPair *pair = g_ptr_array_index(services->items, i);
+    const char *name = node_string(pair->key);
+    if (name) {
+      ok = resolve_service_extends(model, name, NULL, project_root, environment,
+                                   resolution_stack, 0);
+    }
+  }
+  g_hash_table_destroy(resolution_stack);
+  return ok;
+}
+
 static char *discover_file(const char *directory) {
   for (const char **name = compose_names; *name; name++) {
     char *path = g_build_filename(directory, *name, NULL);
@@ -1799,6 +2070,14 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
                                                  environment, include_stack, 0);
   g_hash_table_destroy(include_stack);
   if (!includes_ok) {
+    node_free(interpolated);
+    node_free(merged);
+    g_hash_table_destroy(environment);
+    g_free(*project_name_out);
+    *project_name_out = NULL;
+    return FALSE;
+  }
+  if (!resolve_compose_extends(interpolated, root, environment)) {
     node_free(interpolated);
     node_free(merged);
     g_hash_table_destroy(environment);

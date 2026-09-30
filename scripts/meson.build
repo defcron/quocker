@@ -102,6 +102,13 @@ if not get_option('quocker').disabled()
                'INCLUDED_IMAGE=./parent-override.qcow2'],
          depends: [quocker],
          suite: ['quocker'])
+    quocker_extends_test = executable(
+      'quocker-extends-test', files('../tests/quocker/extends-test.c'),
+      dependencies: [glib, quocker_json])
+    test('quocker-compose-extends', quocker_extends_test,
+         args: [files('../tests/quocker/extends.yaml')],
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     test('quocker-config-env-file-list', quocker,
          args: ['config', '--quiet'],
          env: ['COMPOSE_FILE=../tests/quocker/base.yaml|../tests/quocker/override.yaml',

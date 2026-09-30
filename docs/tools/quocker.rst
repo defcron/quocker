@@ -341,8 +341,17 @@ Include ``env_file`` and ``project_directory`` are supported; the including
 project's environment overrides values from the included project's optional
 ``.env`` or explicit environment files. Relative local disk image, service
 ``env_file``, and top-level config/secret file paths use the included project
-directory. Other path-valued attributes in included services and service
-``extends`` are not implemented yet.
+directory. Service ``extends`` supports a service name for same-file
+inheritance or a mapping with ``service`` and optional ``file`` for external
+inheritance. External files are resolved from the project directory, while
+local image and ``env_file`` paths on the external base service are resolved
+from that file's directory. Inheritance recursively merges mappings, appends
+ordinary sequences, deduplicates supported unique sequences, and merges
+Compose keyed resource sequences by their keys. External base services are
+used as templates and are not added to the project's service list. Missing
+services, invalid declarations, cycles, and excessive inheritance depth are
+reported as errors. Other path-valued attributes in included services are not
+implemented yet.
 
 Runtime state, logs, PID files, and disk overlays live under
 ``.quocker/PROJECT`` under the project directory.
