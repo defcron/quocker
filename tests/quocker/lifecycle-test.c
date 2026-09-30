@@ -13,12 +13,13 @@ static gboolean run_cli_for_project(const char *cli, const char *directory,
                                     const char *compose_file,
                                     const char *project,
                                     const char *service, const char *command,
+                                    const char *extra_arg,
                                     gchar **stdout_text) {
   char *arguments[] = {(char *)cli,          (char *)"--project-directory",
                        (char *)directory,    (char *)"--project-name",
                        (char *)project,      (char *)"-f",
                        (char *)compose_file, (char *)command,
-                       (char *)service,      NULL};
+                       (char *)service,      (char *)extra_arg, NULL};
   gchar *stderr_text = NULL;
   gint status = 0;
   GError *error = NULL;
@@ -42,7 +43,7 @@ static gboolean run_cli(const char *cli, const char *directory,
                         const char *compose_file, const char *command,
                         gchar **stdout_text) {
   return run_cli_for_project(cli, directory, compose_file, "lifecycle", "app",
-                             command, stdout_text);
+                             command, NULL, stdout_text);
 }
 
 static gboolean remove_cli_volumes(const char *cli, const char *directory,
@@ -328,6 +329,29 @@ static void test_stop_preserves_vm_state(void) {
   g_free(output);
   g_unsetenv("QUOCKER_FAKE_QEMU_ARGV_FILE");
 
+  output = NULL;
+  g_assert_true(run_cli_for_project(cli, directory, compose, "wait-ready",
+                                    "app", "up", "--wait", &output));
+  g_assert_nonnull(strstr(output, "[wait-ready] app: ready"));
+  g_free(output);
+  output = NULL;
+  g_assert_true(run_cli_for_project(cli, directory, compose, "wait-ready",
+                                    "app", "down", NULL, &output));
+  g_free(output);
+  char *wait_ready_directory =
+      g_build_filename(directory, ".quocker", "wait-ready", NULL);
+  const char *wait_ready_files[] = {"app.log", "app.pid", "app.state",
+                                    "app.qcow2", "app.qcow2.base",
+                                    ".lifecycle.lock"};
+  for (guint i = 0; i < G_N_ELEMENTS(wait_ready_files); i++) {
+    char *path = g_build_filename(wait_ready_directory, wait_ready_files[i],
+                                  NULL);
+    g_unlink(path);
+    g_free(path);
+  }
+  g_assert_cmpint(g_rmdir(wait_ready_directory), ==, 0);
+  g_free(wait_ready_directory);
+
   const char *completed_compose =
       "services:\n"
       "  app:\n"
@@ -344,6 +368,7 @@ static void test_stop_preserves_vm_state(void) {
   output = NULL;
   g_assert_false(run_cli_for_project(cli, directory, compose,
                                     "completed-failure", "app", "up",
+                                    NULL,
                                     &output));
   g_assert_nonnull(strstr(output, "[completed-failure] job: started"));
   g_assert_null(strstr(output, "[completed-failure] app: started"));
@@ -351,6 +376,7 @@ static void test_stop_preserves_vm_state(void) {
   output = NULL;
   g_assert_true(run_cli_for_project(cli, directory, compose,
                                     "completed-failure", "app", "down",
+                                    NULL,
                                     &output));
   g_free(output);
 
@@ -358,6 +384,7 @@ static void test_stop_preserves_vm_state(void) {
   output = NULL;
   g_assert_true(run_cli_for_project(cli, directory, compose,
                                     "completed-success", "app", "up",
+                                    NULL,
                                     &output));
   g_assert_nonnull(strstr(output, "[completed-success] job: started"));
   g_assert_nonnull(strstr(output, "[completed-success] app: started"));
@@ -367,6 +394,7 @@ static void test_stop_preserves_vm_state(void) {
   output = NULL;
   g_assert_true(run_cli_for_project(cli, directory, compose,
                                     "completed-success", "app", "down",
+                                    NULL,
                                     &output));
   g_free(output);
   const char *completed_projects[] = {"completed-failure", "completed-success"};

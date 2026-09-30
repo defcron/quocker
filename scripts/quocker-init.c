@@ -552,11 +552,18 @@ static void supervise(const GuestConfig *config) {
       fail_guest("could not install signal handler");
     }
   }
+  int exec_status_pipe[2];
+  if (pipe2(exec_status_pipe, O_CLOEXEC) < 0) {
+    fail_guest("could not create workload exec-status pipe");
+  }
   pid_t child = fork();
   if (child < 0) {
+    close(exec_status_pipe[0]);
+    close(exec_status_pipe[1]);
     fail_guest("could not fork workload");
   }
   if (child == 0) {
+    close(exec_status_pipe[0]);
     sigprocmask(SIG_SETMASK, &previous_mask, NULL);
     signal(SIGCHLD, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
@@ -565,12 +572,47 @@ static void supervise(const GuestConfig *config) {
     signal(SIGQUIT, SIG_DFL);
     setpgid(0, 0);
     run_workload(config);
+    int exec_error = errno ? errno : EIO;
+    const unsigned char *error_bytes = (const unsigned char *)&exec_error;
+    size_t error_length = sizeof(exec_error);
+    while (error_length > 0) {
+      ssize_t written =
+          write(exec_status_pipe[1], error_bytes, error_length);
+      if (written < 0 && errno == EINTR) {
+        continue;
+      }
+      if (written <= 0) {
+        break;
+      }
+      error_bytes += written;
+      error_length -= (size_t)written;
+    }
     guest_message("could not exec image command");
     _exit(127);
   }
+  close(exec_status_pipe[1]);
   workload_process_group = child;
   setpgid(child, child);
-  dprintf(STDERR_FILENO, "QUOCKER_READY pid=%ld\n", (long)child);
+  int exec_error = 0;
+  size_t error_length = 0;
+  while (error_length < sizeof(exec_error)) {
+    ssize_t count = read(exec_status_pipe[0],
+                         (unsigned char *)&exec_error + error_length,
+                         sizeof(exec_error) - error_length);
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count <= 0) {
+      break;
+    }
+    error_length += (size_t)count;
+  }
+  close(exec_status_pipe[0]);
+  if (error_length == 0) {
+    dprintf(STDERR_FILENO, "QUOCKER_READY pid=%ld\n", (long)child);
+  } else if (error_length != sizeof(exec_error)) {
+    exec_error = EIO;
+  }
   int workload_status = 0;
   int workload_done = 0;
   for (;;) {

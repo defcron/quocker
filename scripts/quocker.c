@@ -77,6 +77,9 @@ typedef struct Options {
   char *config_list_mode;
   char *port_spec;
   gboolean detach;
+  gboolean wait_for_ready;
+  gboolean wait_timeout_set;
+  guint wait_timeout_seconds;
   gboolean dry_run;
   int signal_number;
   gboolean remove_volumes;
@@ -5143,6 +5146,7 @@ typedef struct UpContext {
   GHashTable *project_environment;
   gboolean dry_run;
   gboolean start_only;
+  gint64 wait_deadline;
 } UpContext;
 
 typedef struct PublishedPortOwner {
@@ -5388,6 +5392,63 @@ static gboolean guest_exit_status_read(const char *directory, const char *name,
   return ok;
 }
 
+static gboolean guest_log_has_ready_marker(const char *directory,
+                                           const char *name) {
+  char *path = g_strdup_printf("%s/%s.log", directory, name);
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  g_free(path);
+  if (fd < 0) {
+    return FALSE;
+  }
+  struct stat st;
+  if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
+    close(fd);
+    return FALSE;
+  }
+  off_t start = st.st_size > QUOCKER_GUEST_LOG_TAIL_BYTES
+                    ? st.st_size - QUOCKER_GUEST_LOG_TAIL_BYTES
+                    : 0;
+  if (lseek(fd, start, SEEK_SET) < 0) {
+    close(fd);
+    return FALSE;
+  }
+  gsize capacity = (gsize)(st.st_size - start);
+  char *contents = g_malloc(capacity + 1);
+  gsize length = 0;
+  while (length < capacity) {
+    ssize_t count = read(fd, contents + length, capacity - length);
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count <= 0) {
+      close(fd);
+      g_free(contents);
+      return FALSE;
+    }
+    length += (gsize)count;
+  }
+  close(fd);
+  contents[length] = '\0';
+  gboolean found = FALSE;
+  const char *line = contents;
+  while (line < contents + length) {
+    const char *end = memchr(line, '\n', (contents + length) - line);
+    gsize line_length = end ? (gsize)(end - line) :
+                              (gsize)((contents + length) - line);
+    if (line_length >= strlen("QUOCKER_READY ") &&
+        memcmp(line, "QUOCKER_READY ", strlen("QUOCKER_READY ")) == 0) {
+      found = TRUE;
+      break;
+    }
+    if (!end) {
+      break;
+    }
+    line = end + 1;
+  }
+  g_free(contents);
+  return found;
+}
+
 static gboolean wait_completed_dependency(const char *service_name,
                                           UpContext *ctx) {
   if (ctx->lifecycle_lock_fd >= 0 &&
@@ -5458,6 +5519,69 @@ static gboolean wait_completed_dependencies(const char *name, YNode *service,
     }
   }
   return TRUE;
+}
+
+static gboolean wait_ready_one(const char *name, YNode *service, void *data) {
+  UpContext *ctx = data;
+  gboolean uses_quocker_init = !service_image_is_local(service, ctx->root);
+  pid_t pid = read_pid(ctx->directory, name);
+  guint64 start_time = state_process_start_time(ctx->directory, name);
+  gint64 deadline = ctx->wait_deadline;
+  gboolean lock_released = ctx->lifecycle_lock_fd >= 0;
+  if (lock_released && flock(ctx->lifecycle_lock_fd, LOCK_UN) < 0) {
+    fail("could not release project lifecycle lock while waiting for guest "
+         "readiness: %s",
+         g_strerror(errno));
+    return FALSE;
+  }
+  gboolean ready = FALSE;
+  for (;;) {
+    gboolean running = process_running(pid, ctx->project, name, start_time);
+    if (!uses_quocker_init) {
+      if (running) {
+        ready = TRUE;
+      } else {
+        fail("service '%s' stopped before becoming ready", name);
+      }
+      break;
+    }
+    if (guest_log_has_ready_marker(ctx->directory, name)) {
+      ready = TRUE;
+      break;
+    }
+    if (!running) {
+      int guest_status = -1;
+      if (guest_exit_status_read(ctx->directory, name, &guest_status)) {
+        if (guest_status == 0) {
+          ready = TRUE;
+        } else {
+          fail("service '%s' exited before becoming ready with status %d",
+               name, guest_status);
+        }
+      }
+      break;
+    }
+    if (deadline && g_get_monotonic_time() >= deadline) {
+      fail("timed out waiting for service '%s' to become ready", name);
+      break;
+    }
+    g_usleep(100000);
+  }
+  if (lock_released) {
+    while (flock(ctx->lifecycle_lock_fd, LOCK_EX) < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      fail("could not reacquire project lifecycle lock after readiness wait: "
+           "%s",
+           g_strerror(errno));
+      return FALSE;
+    }
+  }
+  if (ready) {
+    g_print("[%s] %s: ready\n", ctx->project, name);
+  }
+  return ready;
 }
 
 static gboolean up_one(const char *name, YNode *service, void *data) {
@@ -5612,6 +5736,14 @@ static gboolean run_up_services(YNode *services, Options *opts,
                                 &preflight);
   if (ok) {
     ok = for_up_services(services, opts, up_one, &context);
+  }
+  if (ok && opts->wait_for_ready && !opts->dry_run) {
+    if (opts->wait_timeout_seconds) {
+      context.wait_deadline =
+          g_get_monotonic_time() +
+          (gint64)opts->wait_timeout_seconds * G_TIME_SPAN_SECOND;
+    }
+    ok = for_up_services(services, opts, wait_ready_one, &context);
   }
   g_ptr_array_free(preflight.published, TRUE);
   if (ok && !opts->detach && !opts->dry_run) {
@@ -6120,6 +6252,7 @@ static void usage(FILE *file) {
           "      --project-directory DIR Set project directory\n"
           "      --env-file FILE         Set interpolation environment file\n"
           "      --profile PROFILE       Enable a service profile\n\n"
+          "  up --wait [--wait-timeout SEC] Wait for guest workloads to be ready\n"
           "  config --format yaml|json   Select config output format\n"
           "  config --services|--profiles|--images  List config entries\n"
           "  config --volumes|--networks   List declared resources\n"
@@ -6214,6 +6347,30 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       opts->command = g_strdup(arg);
     } else if (opts->command && g_str_equal(arg, "-d")) {
       opts->detach = TRUE;
+    } else if (opts->command && g_str_equal(arg, "--wait")) {
+      opts->wait_for_ready = TRUE;
+      opts->detach = TRUE;
+    } else if (opts->command &&
+               (g_str_equal(arg, "--wait-timeout") ||
+                g_str_has_prefix(arg, "--wait-timeout="))) {
+      const char *value = NULL;
+      if (g_str_equal(arg, "--wait-timeout")) {
+        if (++i >= argc) {
+          fail("option --wait-timeout requires a number of seconds");
+          return FALSE;
+        }
+        value = argv[i];
+      } else {
+        value = arg + strlen("--wait-timeout=");
+      }
+      char *end = NULL;
+      guint64 seconds = g_ascii_strtoull(value, &end, 10);
+      if (!value[0] || end == value || *end || seconds > G_MAXUINT) {
+        fail("--wait-timeout must be a non-negative number of seconds");
+        return FALSE;
+      }
+      opts->wait_timeout_set = TRUE;
+      opts->wait_timeout_seconds = (guint)seconds;
     } else if (opts->command && g_str_equal(arg, "--dry-run") &&
                (g_str_equal(opts->command, "up") ||
                 g_str_equal(opts->command, "start") ||
@@ -6308,8 +6465,16 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       (opts->services->len || opts->files->len || opts->env_files->len ||
        opts->project_name || opts->project_directory || opts->port_spec ||
        opts->quiet || opts->detach || opts->dry_run || opts->remove_volumes ||
-       opts->follow)) {
+       opts->follow || opts->wait_for_ready || opts->wait_timeout_set)) {
     fail("version accepts only the optional --short flag");
+    return FALSE;
+  }
+  if (opts->wait_for_ready && !g_str_equal(opts->command, "up")) {
+    fail("--wait is currently supported only with 'up'");
+    return FALSE;
+  }
+  if (opts->wait_timeout_set && !opts->wait_for_ready) {
+    fail("--wait-timeout requires --wait");
     return FALSE;
   }
   if (opts->config_list_mode && opts->config_format) {

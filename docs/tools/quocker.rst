@@ -432,6 +432,14 @@ Runtime state, logs, PID files, and disk overlays live under
 
 ``up`` processes ``depends_on`` dependencies before their dependent services
 and automatically includes required dependencies when a service is selected.
+``up --wait`` returns after selected services are ready. For OCI-backed VMs,
+readiness means the bundled guest init successfully executed the configured
+workload; it reports this over the serial channel only after the workload's
+``exec`` succeeds. ``--wait-timeout SECONDS`` sets a maximum wait, with zero
+meaning no timeout. The option implies detached startup. For local bootable
+disk images Quocker can verify only that the QEMU process is running; it cannot
+assert that an application inside that VM is ready. Compose health checks
+remain unsupported.
 Short syntax and long syntax with ``condition: service_started`` are
 supported. This means the dependency's QEMU process has started; it does not
 claim that an application inside the guest is ready. Long syntax with

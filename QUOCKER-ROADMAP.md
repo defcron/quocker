@@ -125,8 +125,11 @@ has a meaningful VM equivalent.
   QEMU integration test covers stop, start, down, and wait. The `wait` command
   blocks until selected saved VM processes stop and revalidates PID identity.
   `service_completed_successfully` waits for the dependency VM to exit and
-  starts dependents only after guest-reported status zero; `service_healthy`,
-  wait output, crash recovery, and most command compatibility remain open.
+  starts dependents only after guest-reported status zero. `up --wait` waits
+  for OCI workload exec readiness and accepts `--wait-timeout`; local bootable
+  disks can only be checked for a live QEMU process. Guest init reports
+  readiness only after successful `exec`. `service_healthy`, crash recovery,
+  and most command compatibility remain open.
   `version` now
   reports the Quocker interface and QEMU base versions, with a short form and
   the existing `--version` alias covered by a CLI test. New state files
@@ -365,8 +368,10 @@ in user-facing compatibility promises.
    resume use QMP, and the fake-QEMU integration test exercises these commands.
    `wait` blocks until selected VM processes stop and checks the recorded
    process identity; it does not print guest workload exit codes.
-   Crash
-   recovery and complete flag compatibility remain unfinished. Implement only after Phase 0 defines
+   `up --wait` waits for OCI workload exec readiness and accepts
+   `--wait-timeout`; local bootable disks can only be checked for a live QEMU
+   process. Crash recovery and complete flag compatibility remain unfinished.
+   Implement only after Phase 0 defines
    VM semantics; explain commands with no meaningful VM equivalent.
    `port SERVICE PRIVATE_PORT[/PROTOCOL]` reports configured static host
    bindings and queries QMP for dynamically allocated host ports while a VM is
@@ -448,7 +453,10 @@ in user-facing compatibility promises.
    A statically linked guest-init program
    mounts the ext4 root, applies the OCI user/working directory/environment,
    launches the command as a child, forwards signals, reaps children, and
-   reports readiness/exit on serial. A C initrd builder appends this init and a
+   reports readiness only after successful exec plus exit status on serial. The
+   host supports `up --wait` and `--wait-timeout`, using that readiness marker
+   for OCI guests; local bootable disks can only be checked for a live QEMU
+   process. A C initrd builder appends this init and a
    bounded runtime config to the digest-verified catalog initrd. Remaining
    work: provision trust keys, maintain kernel/initrd assets and catalog
    updates, implement guest network configuration, and persist structured
