@@ -514,6 +514,103 @@ static gboolean read_project_env_file(GHashTable *environment,
   return ok;
 }
 
+static gboolean project_name_valid_explicit(const char *name) {
+  if (!name || !(g_ascii_islower(name[0]) || g_ascii_isdigit(name[0]))) {
+    return FALSE;
+  }
+  for (const char *p = name; *p; p++) {
+    if (!(g_ascii_islower(*p) || g_ascii_isdigit(*p) || *p == '-' ||
+          *p == '_')) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+static char *project_name_normalize(const char *name) {
+  char *lower = g_ascii_strdown(name ? name : "", -1);
+  GString *normalized = g_string_new(NULL);
+  for (const char *p = lower; *p; p++) {
+    if (g_ascii_islower(*p) || g_ascii_isdigit(*p) || *p == '-' ||
+        *p == '_') {
+      g_string_append_c(normalized, *p);
+    }
+  }
+  g_free(lower);
+  while (normalized->len &&
+         (normalized->str[0] == '-' || normalized->str[0] == '_')) {
+    g_string_erase(normalized, 0, 1);
+  }
+  return g_string_free(normalized, FALSE);
+}
+
+static gboolean resolve_project_name(YNode *config, const char *root,
+                                     const char *explicit_name,
+                                     GHashTable *environment,
+                                     char **project_name_out) {
+  const char *configured_name = node_string(map_get(config, "name"));
+  char *interpolated_config_name = NULL;
+  if (configured_name) {
+    interpolated_config_name =
+        interpolate_text(configured_name, environment);
+    if (!interpolated_config_name) {
+      return FALSE;
+    }
+  }
+  char *project_name = NULL;
+  if (explicit_name) {
+    if (!project_name_valid_explicit(explicit_name)) {
+      fail("invalid project name '%s': use lowercase letters, digits, '-' "
+           "or '_', and begin with a lowercase letter or digit",
+           explicit_name);
+      g_free(interpolated_config_name);
+      return FALSE;
+    }
+    project_name = g_strdup(explicit_name);
+  } else {
+    const char *environment_name =
+        g_hash_table_lookup(environment, "COMPOSE_PROJECT_NAME");
+    const char *source = environment_name && *environment_name
+                             ? environment_name
+                         : interpolated_config_name &&
+                                   *interpolated_config_name
+                             ? interpolated_config_name
+                             : NULL;
+    char *directory_name = NULL;
+    if (!source) {
+      directory_name = g_path_get_basename(root);
+      source = directory_name;
+    }
+    project_name = project_name_normalize(source);
+    g_free(directory_name);
+  }
+  g_free(interpolated_config_name);
+  if (!*project_name) {
+    fail("project name is empty after Compose normalization");
+    g_free(project_name);
+    return FALSE;
+  }
+  YNode *name_node = node_new(NODE_SCALAR, TAG_STR);
+  name_node->scalar = g_strdup(project_name);
+  map_set(config, "name", name_node);
+  g_hash_table_replace(environment, g_strdup("COMPOSE_PROJECT_NAME"),
+                       g_strdup(project_name));
+  *project_name_out = project_name;
+  return TRUE;
+}
+
+static gboolean interpolate_compose_values(YNode *config,
+                                            GHashTable *environment) {
+  for (guint i = 0; i < config->items->len; i++) {
+    YPair *pair = g_ptr_array_index(config->items, i);
+    if (g_strcmp0(node_string(pair->key), "name") != 0 &&
+        !interpolate_node(pair->value, environment)) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
 static gboolean yaml_parse_text(const char *text, YNode **root,
                                 char **problem) {
   yaml_parser_t parser;
@@ -872,8 +969,11 @@ static GPtrArray *resolve_files(Options *opts, char **root_out) {
 }
 
 static gboolean parse_compose_files(GPtrArray *files, const char *root,
-                                    GPtrArray *env_files, YNode **config,
-                                    GHashTable **environment_out) {
+                                    GPtrArray *env_files,
+                                    const char *explicit_project_name,
+                                    YNode **config,
+                                    GHashTable **environment_out,
+                                    char **project_name_out) {
   GHashTable *environment =
       g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   /* Copy process environment explicitly; GLib owns the returned vector. */
@@ -925,6 +1025,8 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
     }
   }
   YNode *merged = node_new(NODE_MAPPING, TAG_MAP);
+  GPtrArray *parsed_files =
+      g_ptr_array_new_with_free_func((GDestroyNotify)node_free);
   for (guint i = 0; i < files->len; i++) {
     const char *path = g_ptr_array_index(files, i);
     gchar *contents = NULL;
@@ -939,6 +1041,7 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
     } else if (!g_file_get_contents(path, &contents, NULL, NULL)) {
       fail("cannot read Compose file %s", path);
       node_free(merged);
+      g_ptr_array_free(parsed_files, TRUE);
       g_hash_table_destroy(environment);
       return FALSE;
     }
@@ -952,20 +1055,48 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
       g_free(problem);
       node_free(parsed);
       node_free(merged);
+      g_ptr_array_free(parsed_files, TRUE);
       g_hash_table_destroy(environment);
       return FALSE;
     }
-    if (!interpolate_node(parsed, environment)) {
-      node_free(parsed);
-      node_free(merged);
-      g_hash_table_destroy(environment);
-      return FALSE;
-    }
+    g_ptr_array_add(parsed_files, parsed);
     YNode *next = node_merge(merged, parsed, NULL);
-    node_free(parsed);
     node_free(merged);
     merged = next;
   }
+  if (!resolve_project_name(merged, root, explicit_project_name, environment,
+                            project_name_out)) {
+    node_free(merged);
+    g_ptr_array_free(parsed_files, TRUE);
+    g_hash_table_destroy(environment);
+    return FALSE;
+  }
+  YNode *interpolated = node_new(NODE_MAPPING, TAG_MAP);
+  gboolean interpolation_ok = TRUE;
+  for (guint i = 0; i < parsed_files->len && interpolation_ok; i++) {
+    YNode *parsed = node_clone(g_ptr_array_index(parsed_files, i));
+    interpolation_ok = interpolate_compose_values(parsed, environment);
+    if (interpolation_ok) {
+      YNode *next = node_merge(interpolated, parsed, NULL);
+      node_free(interpolated);
+      interpolated = next;
+    }
+    node_free(parsed);
+  }
+  g_ptr_array_free(parsed_files, TRUE);
+  if (!interpolation_ok) {
+    node_free(interpolated);
+    node_free(merged);
+    g_hash_table_destroy(environment);
+    g_free(*project_name_out);
+    *project_name_out = NULL;
+    return FALSE;
+  }
+  YNode *normalized_name = node_new(NODE_SCALAR, TAG_STR);
+  normalized_name->scalar = g_strdup(*project_name_out);
+  map_set(interpolated, "name", normalized_name);
+  node_free(merged);
+  merged = interpolated;
   const char *schema_override = g_getenv("QUOCKER_COMPOSE_SCHEMA");
   const char *schema_path = schema_override && *schema_override
                                 ? schema_override
@@ -4452,28 +4583,15 @@ int main(int argc, char **argv) {
   GPtrArray *files = resolve_files(&opts, &root);
   YNode *config = NULL;
   GHashTable *project_environment = NULL;
-  if (!parse_compose_files(files, root, opts.env_files, &config,
-                           &project_environment)) {
+  char *project_lower = NULL;
+  if (!parse_compose_files(files, root, opts.env_files, opts.project_name,
+                           &config, &project_environment, &project_lower)) {
     return 1;
   }
   YNode *services = map_get(config, "services");
   if (!services || services->kind != NODE_MAPPING || !services->items->len) {
     fail("Compose configuration must contain a non-empty services mapping");
     return 1;
-  }
-  const char *project =
-      opts.project_name ? opts.project_name : g_getenv("COMPOSE_PROJECT_NAME");
-  if (!project || !*project) {
-    project = node_string(map_get(config, "name"));
-  }
-  if (!project || !*project) {
-    project = g_path_get_basename(root);
-  }
-  char *project_lower = g_ascii_strdown(project, -1);
-  if (!map_get(config, "name")) {
-    YNode *name = node_new(NODE_SCALAR, TAG_STR);
-    name->scalar = g_strdup(project_lower);
-    map_set(config, "name", name);
   }
   char *directory = service_dir(root, project_lower);
   if (!g_str_equal(opts.command, "config") &&

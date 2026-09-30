@@ -1,0 +1,6 @@
+name: My.Project
+services:
+  app:
+    image: ./app.qcow2
+    labels:
+      resolved_project: "${COMPOSE_PROJECT_NAME}"

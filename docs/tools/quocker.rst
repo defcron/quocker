@@ -53,6 +53,14 @@ Quocker also reads ``COMPOSE_FILE``, ``COMPOSE_PATH_SEPARATOR``,
 to be a broad Compose-compatible superset, but the QEMU runtime does not
 implement every Docker Compose behavior yet.
 
+Project names follow Compose precedence: ``-p``, ``COMPOSE_PROJECT_NAME``,
+top-level ``name``, then the project directory name. Explicit ``-p`` values
+must already be lowercase and contain only letters, digits, hyphens, and
+underscores, starting with a letter or digit. Environment, file, and directory
+names are lowercased and stripped to those characters. The resolved value is
+written to ``name`` in ``config`` output and exposed as
+``COMPOSE_PROJECT_NAME`` during file interpolation.
+
 .. code-block:: yaml
 
    name: dev-stack

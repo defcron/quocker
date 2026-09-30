@@ -141,6 +141,19 @@ if not get_option('quocker').disabled()
                (meson.current_source_dir() /
                 '../tests/quocker/schema-unsupported-keyword.json')],
          should_fail: true, suite: ['quocker'])
+    test('quocker-project-name-invalid-explicit', quocker,
+         args: ['-f', files('../tests/quocker/project-name.yaml'), '-p',
+                '../unsafe', 'config', '--quiet'],
+         should_fail: true, suite: ['quocker'])
+    quocker_project_name_test = executable(
+      'quocker-project-name-test',
+      files('../tests/quocker/project-name-test.c'),
+      dependencies: [glib, quocker_json])
+    test('quocker-project-name', quocker_project_name_test,
+         args: [files('../tests/quocker/project-name.yaml'),
+                files('../tests/quocker/Project.Name/compose.yaml')],
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     test('quocker-dependencies-cycle', quocker,
          args: ['-f', files('../tests/quocker/dependencies-cycle.yaml'), 'up'],
          should_fail: true, suite: ['quocker'])

@@ -88,8 +88,8 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 43 focused tests; its latest run reported 24
-  passes, 19 expected failures, and no unexpected failures.
+  Meson suite currently has 45 focused tests; its latest run reported 25
+  passes, 20 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
   ownership and extended-attribute metadata, traversal and symlink-parent
@@ -218,7 +218,7 @@ process/state recovery, cleanup, and packaging need more coverage and review.
 OCI service ``env_file`` now supports ordered path lists, interpolation,
 optional long-form files, raw format, and service-environment precedence in C;
 explicit unresolved environment entries remove image defaults. The current
-The Quocker suite contains 43 tests: 24 pass, 19 produce expected failures,
+The Quocker suite contains 45 tests: 25 pass, 20 produce expected failures,
 and none fail unexpectedly. It includes JSON config serialization, static and
 dynamic port queries, plus a fake-QEMU lifecycle integration
 test covering stop, start, down, pause, unpause, kill, state preservation, and
@@ -282,9 +282,13 @@ in user-facing compatibility promises.
    snapshot and fails closed if the schema adds a recognized but unsupported
    JSON Schema assertion. YAML scalar resolution and merge behavior still need
    compatibility fixtures against Docker Compose.
-2. Implement canonical filename precedence and discovery, `-f`, `COMPOSE_FILE`,
-   path separators, standard input, `--project-directory`, and the documented
-   project-name rules.
+2. **Partially implemented:** canonical file discovery, `-f`, `COMPOSE_FILE`,
+   path separators, standard input, and `--project-directory` are supported.
+   Project names now follow Compose precedence, normalize config/env/directory
+   names, reject invalid explicit `-p` values, update `config` output, and are
+   exposed as `COMPOSE_PROJECT_NAME` before per-file interpolation. Relative
+   paths in nested `include`/`extends` files and full project naming fixtures
+   remain.
 3. Implement `.env`, repeated `--env-file`, environment precedence, quoting,
    comments, unset variables, and the full Compose interpolation grammar,
    including nested defaults, required forms, `$$`, and interpolation only
