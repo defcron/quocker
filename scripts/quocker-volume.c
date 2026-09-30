@@ -27,6 +27,21 @@ static void volume_error(GError **error, const char *message) {
 
 static char *volume_metadata_read(const char *disk_path);
 
+static gboolean volume_directory_sync(const char *volume_directory,
+                                      GError **error) {
+  int fd = open(volume_directory, O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+  if (fd < 0) {
+    volume_error(error, "could not open the project volume directory for sync");
+    return FALSE;
+  }
+  gboolean synced = fsync(fd) == 0;
+  close(fd);
+  if (!synced) {
+    volume_error(error, "could not sync the project volume directory");
+  }
+  return synced;
+}
+
 static gboolean volume_disk_valid(const char *path) {
   int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
   if (fd < 0) {
@@ -57,21 +72,47 @@ static gboolean volume_metadata_write(const char *disk_path,
   char *escaped = g_strescape(logical_name, NULL);
   char *contents = g_strconcat(escaped, "\n", NULL);
   char *metadata_path = g_strconcat(disk_path, ".name", NULL);
-  int fd = open(metadata_path,
-                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
-  if (fd < 0 && errno == EEXIST) {
+  char *volume_directory = g_path_get_dirname(disk_path);
+  struct stat metadata_stat;
+  if (g_lstat(metadata_path, &metadata_stat) == 0) {
+    if (!S_ISREG(metadata_stat.st_mode) || metadata_stat.st_uid != geteuid() ||
+        (metadata_stat.st_mode & 0077)) {
+      g_free(volume_directory);
+      g_free(metadata_path);
+      g_free(contents);
+      g_free(escaped);
+      return FALSE;
+    }
     char *existing_name = volume_metadata_read(disk_path);
-    gboolean matches = g_strcmp0(existing_name, logical_name) == 0;
+    if (existing_name && !g_str_equal(existing_name, logical_name)) {
+      g_free(existing_name);
+      g_free(volume_directory);
+      g_free(metadata_path);
+      g_free(contents);
+      g_free(escaped);
+      return FALSE;
+    }
+    if (existing_name) {
+      g_free(existing_name);
+      g_free(volume_directory);
+      g_free(metadata_path);
+      g_free(contents);
+      g_free(escaped);
+      return TRUE;
+    }
     g_free(existing_name);
+  } else if (errno != ENOENT) {
+    g_free(volume_directory);
     g_free(metadata_path);
     g_free(contents);
     g_free(escaped);
-    return matches;
+    return FALSE;
   }
+  char *temporary_path = g_strdup_printf("%s.tmp.XXXXXX", metadata_path);
+  int fd = g_mkstemp(temporary_path);
   gsize offset = 0;
   gsize content_length = strlen(contents);
-  gboolean created = fd >= 0;
-  gboolean ok = created;
+  gboolean ok = fd >= 0 && fchmod(fd, 0600) == 0;
   while (ok && offset < content_length) {
     ssize_t written = write(fd, contents + offset, content_length - offset);
     if (written < 0 && errno == EINTR) {
@@ -85,11 +126,19 @@ static gboolean volume_metadata_write(const char *disk_path,
   }
   ok = ok && fsync(fd) == 0;
   if (fd >= 0) {
-    close(fd);
+    ok = close(fd) == 0 && ok;
   }
-  if (!ok && created) {
-    g_unlink(metadata_path);
+  if (ok) {
+    ok = g_rename(temporary_path, metadata_path) == 0;
   }
+  if (ok) {
+    ok = volume_directory_sync(volume_directory, NULL);
+  }
+  if (!ok) {
+    g_unlink(temporary_path);
+  }
+  g_free(temporary_path);
+  g_free(volume_directory);
   g_free(metadata_path);
   g_free(contents);
   g_free(escaped);
@@ -104,21 +153,39 @@ static char *volume_metadata_read(const char *disk_path) {
     return NULL;
   }
   struct stat st;
-  if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
-      st.st_size > 64 * 1024) {
+  if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
+      (st.st_mode & 0077) || st.st_size <= 1 || st.st_size > 64 * 1024) {
     close(fd);
     return NULL;
   }
   char *contents = g_malloc((gsize)st.st_size + 1);
-  ssize_t count = read(fd, contents, (gsize)st.st_size);
+  gsize offset = 0;
+  while (offset < (gsize)st.st_size) {
+    ssize_t count = read(fd, contents + offset, (gsize)st.st_size - offset);
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count <= 0) {
+      break;
+    }
+    offset += (gsize)count;
+  }
   close(fd);
-  if (count != st.st_size || contents[count - 1] != '\n') {
+  if (offset != (gsize)st.st_size || contents[offset - 1] != '\n' ||
+      memchr(contents, '\0', offset - 1) != NULL) {
     g_free(contents);
     return NULL;
   }
-  contents[count - 1] = '\0';
+  contents[offset - 1] = '\0';
   char *name = g_strcompress(contents);
+  char *escaped = g_strescape(name, NULL);
+  gboolean canonical = *name && g_str_equal(escaped, contents);
+  g_free(escaped);
   g_free(contents);
+  if (!canonical) {
+    g_free(name);
+    return NULL;
+  }
   return name;
 }
 
@@ -294,6 +361,85 @@ static gboolean volume_disk_lock_exclusive(const char *disk_path, int *fd_out,
   return TRUE;
 }
 
+static gboolean volume_recover_unlocked(const char *project_directory,
+                                        GError **error) {
+  char *volume_directory = g_build_filename(project_directory, "volumes", NULL);
+  struct stat directory_stat;
+  if (g_lstat(volume_directory, &directory_stat) < 0) {
+    gboolean missing = errno == ENOENT;
+    if (!missing) {
+      volume_error(error, "could not inspect the project volume directory");
+    }
+    g_free(volume_directory);
+    return missing;
+  }
+  if (!S_ISDIR(directory_stat.st_mode) || S_ISLNK(directory_stat.st_mode) ||
+      (directory_stat.st_mode & 0077)) {
+    volume_error(error, "project volume directory is unsafe");
+    g_free(volume_directory);
+    return FALSE;
+  }
+  GDir *directory = g_dir_open(volume_directory, 0, NULL);
+  if (!directory) {
+    volume_error(error, "could not read the project volume directory");
+    g_free(volume_directory);
+    return FALSE;
+  }
+  gboolean changed = FALSE;
+  gboolean ok = TRUE;
+  const char *entry;
+  while (ok && (entry = g_dir_read_name(directory))) {
+    gboolean temporary_disk = g_str_has_prefix(entry, ".volume.");
+    gboolean temporary_metadata = strstr(entry, ".ext4.name.tmp.") != NULL;
+    gboolean metadata_sidecar = g_str_has_suffix(entry, ".ext4.name");
+    if (!temporary_disk && !temporary_metadata && !metadata_sidecar) {
+      continue;
+    }
+    char *entry_path = g_build_filename(volume_directory, entry, NULL);
+    struct stat entry_stat;
+    if (g_lstat(entry_path, &entry_stat) < 0 || !S_ISREG(entry_stat.st_mode) ||
+        entry_stat.st_uid != geteuid() || (entry_stat.st_mode & 0077)) {
+      volume_error(error, "project volume directory has unsafe recovery data");
+      g_free(entry_path);
+      ok = FALSE;
+      break;
+    }
+    gboolean orphan_metadata = FALSE;
+    if (metadata_sidecar) {
+      gsize disk_name_length = strlen(entry) - strlen(".name");
+      char *disk_name = g_strndup(entry, disk_name_length);
+      char *disk_path = g_build_filename(volume_directory, disk_name, NULL);
+      struct stat disk_stat;
+      if (g_lstat(disk_path, &disk_stat) < 0) {
+        if (errno == ENOENT) {
+          orphan_metadata = TRUE;
+        } else {
+          volume_error(error,
+                       "could not inspect volume metadata recovery state");
+          ok = FALSE;
+        }
+      }
+      g_free(disk_path);
+      g_free(disk_name);
+    }
+    if (ok && (temporary_disk || temporary_metadata || orphan_metadata)) {
+      if (g_unlink(entry_path) < 0) {
+        volume_error(error, "could not remove stale volume recovery data");
+        ok = FALSE;
+      } else {
+        changed = TRUE;
+      }
+    }
+    g_free(entry_path);
+  }
+  g_dir_close(directory);
+  if (ok && changed) {
+    ok = volume_directory_sync(volume_directory, error);
+  }
+  g_free(volume_directory);
+  return ok;
+}
+
 static gboolean volume_list_unlocked(const char *project_directory,
                                      GPtrArray **volumes_out, GError **error) {
   if (error) {
@@ -462,6 +608,10 @@ gboolean quocker_volume_remove(const char *project_directory,
   if (lock_fd == -1) {
     return FALSE;
   }
+  if (!volume_recover_unlocked(project_directory, error)) {
+    volume_lock_release(lock_fd);
+    return FALSE;
+  }
   GPtrArray *volumes = NULL;
   if (!volume_list_unlocked(project_directory, &volumes, error)) {
     volume_lock_release(lock_fd);
@@ -492,7 +642,15 @@ gboolean quocker_volume_remove(const char *project_directory,
   if (!removed) {
     volume_error(error, "could not remove the volume disk");
   } else {
-    g_unlink(metadata_path);
+    if (g_unlink(metadata_path) < 0 && errno != ENOENT) {
+      volume_error(error, "could not remove volume metadata");
+      removed = FALSE;
+    }
+    char *volume_directory = g_path_get_dirname(selected->disk_path);
+    if (!volume_directory_sync(volume_directory, error)) {
+      removed = FALSE;
+    }
+    g_free(volume_directory);
   }
   g_free(metadata_path);
   close(disk_fd);
@@ -512,6 +670,10 @@ gboolean quocker_volume_remove_all(const char *project_directory,
   }
   int lock_fd = volume_lock_acquire(project_directory, FALSE, TRUE, error);
   if (lock_fd == -1) {
+    return FALSE;
+  }
+  if (!volume_recover_unlocked(project_directory, error)) {
+    volume_lock_release(lock_fd);
     return FALSE;
   }
   GPtrArray *volumes = NULL;
@@ -535,6 +697,7 @@ gboolean quocker_volume_remove_all(const char *project_directory,
     g_array_append_val(disk_fds, disk_fd);
   }
   gboolean removed = TRUE;
+  gboolean changed = FALSE;
   for (guint i = 0; i < volumes->len; i++) {
     QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
     char *metadata_path = g_strconcat(info->disk_path, ".name", NULL);
@@ -544,8 +707,22 @@ gboolean quocker_volume_remove_all(const char *project_directory,
       g_free(metadata_path);
       break;
     }
-    g_unlink(metadata_path);
+    changed = TRUE;
+    if (g_unlink(metadata_path) < 0 && errno != ENOENT) {
+      volume_error(error, "could not remove project volume metadata");
+      removed = FALSE;
+      g_free(metadata_path);
+      break;
+    }
     g_free(metadata_path);
+  }
+  if (changed) {
+    char *volume_directory =
+        g_build_filename(project_directory, "volumes", NULL);
+    if (!volume_directory_sync(volume_directory, error)) {
+      removed = FALSE;
+    }
+    g_free(volume_directory);
   }
   for (guint i = 0; i < disk_fds->len; i++) {
     close(g_array_index(disk_fds, int, i));
@@ -589,6 +766,11 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
   }
   int lock_fd = volume_lock_acquire(project_directory, TRUE, TRUE, error);
   if (lock_fd < 0) {
+    g_free(volume_directory);
+    return FALSE;
+  }
+  if (!volume_recover_unlocked(project_directory, error)) {
+    volume_lock_release(lock_fd);
     g_free(volume_directory);
     return FALSE;
   }
@@ -678,6 +860,20 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
     g_free(volume_directory);
     return FALSE;
   }
+  fd = open(temporary_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0 || fsync(fd) < 0) {
+    if (fd >= 0) {
+      close(fd);
+    }
+    volume_error(error, "could not sync the initialized volume disk");
+    g_unlink(temporary_path);
+    g_free(temporary_path);
+    g_free(disk_path);
+    volume_lock_release(lock_fd);
+    g_free(volume_directory);
+    return FALSE;
+  }
+  close(fd);
   if (link(temporary_path, disk_path) < 0 && errno != EEXIST) {
     volume_error(error, "could not publish the initialized volume disk");
     g_unlink(temporary_path);
@@ -689,6 +885,12 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
   }
   g_unlink(temporary_path);
   g_free(temporary_path);
+  if (!volume_directory_sync(volume_directory, error)) {
+    g_free(disk_path);
+    volume_lock_release(lock_fd);
+    g_free(volume_directory);
+    return FALSE;
+  }
   if (!volume_disk_valid(disk_path)) {
     volume_error(error, "published volume disk failed ext4 validation");
     g_free(disk_path);

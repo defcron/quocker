@@ -121,6 +121,27 @@ int main(void) {
       directory, &virtual_bytes, &allocated_bytes, &quota_bytes, &error));
   g_assert_no_error(error);
   g_assert_cmpuint(virtual_bytes, ==, 128 * 1024 * 1024);
+
+  char *recovery_directory = g_build_filename(directory, "volumes", NULL);
+  char *metadata_path = g_strconcat(first, ".name", NULL);
+  char *stale_disk =
+      g_build_filename(recovery_directory, ".volume.interrupted", NULL);
+  char *orphan_metadata =
+      g_build_filename(recovery_directory, "orphan.ext4.name", NULL);
+  char *stale_metadata = g_build_filename(
+      recovery_directory, "orphan.ext4.name.tmp.interrupted", NULL);
+  g_assert_true(g_file_set_contents(metadata_path, "partial", -1, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_file_set_contents(stale_disk, "partial", -1, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_file_set_contents(orphan_metadata, "orphan\n", -1, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_file_set_contents(stale_metadata, "partial", -1, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(g_chmod(metadata_path, 0600), ==, 0);
+  g_assert_cmpint(g_chmod(stale_disk, 0600), ==, 0);
+  g_assert_cmpint(g_chmod(orphan_metadata, 0600), ==, 0);
+  g_assert_cmpint(g_chmod(stale_metadata, 0600), ==, 0);
   char *second = NULL;
   g_assert_true(quocker_volume_disk_prepare(
       directory, "project:data", 128 * 1024 * 1024, &second, &error));
@@ -128,6 +149,25 @@ int main(void) {
   g_assert_cmpstr(first, ==, second);
   g_assert_cmpint(g_lstat(second, &st), ==, 0);
   g_assert_cmpint(st.st_size, ==, 64 * 1024 * 1024);
+  g_assert_false(g_file_test(stale_disk, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(orphan_metadata, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(stale_metadata, G_FILE_TEST_EXISTS));
+  g_assert_true(quocker_volume_list(directory, &volumes, &error));
+  g_assert_no_error(error);
+  gboolean metadata_recovered = FALSE;
+  for (guint i = 0; i < volumes->len; i++) {
+    QuockerVolumeInfo *volume = g_ptr_array_index(volumes, i);
+    if (g_str_equal(volume->disk_path, first)) {
+      metadata_recovered = g_str_equal(volume->logical_name, "project:data");
+    }
+  }
+  g_assert_true(metadata_recovered);
+  g_ptr_array_free(volumes, TRUE);
+  g_free(recovery_directory);
+  g_free(metadata_path);
+  g_free(stale_disk);
+  g_free(orphan_metadata);
+  g_free(stale_metadata);
 
 #ifdef F_OFD_SETLK
   int in_use_fd = open(first, O_RDONLY | O_CLOEXEC);

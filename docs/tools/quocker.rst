@@ -184,6 +184,9 @@ Quocker starts QEMU with file locking enabled for managed volume disks.
 before deleting disk files and refuse removal while a locking-aware QEMU
 process has them open. This protection cannot cover external QEMU invocations
 that explicitly disable file locking.
+Write-side volume operations repair interrupted metadata updates and remove
+orphan sidecars and abandoned staging files after a crash. Recovery runs under
+the project volume lock; read-only listing does not alter the volume directory.
 ``down`` preserves these disks; ``down --volumes`` removes project volume disks
 after all project VMs have stopped. Bind mounts, tmpfs, external volumes,
 non-local drivers, driver options, and long-form volume suboptions are
