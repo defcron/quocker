@@ -3178,8 +3178,41 @@ static char *port_forwards(YNode *service, const char *name, gboolean *valid,
   return g_string_free(forwards, FALSE);
 }
 
+static gboolean validate_service_network_mode(YNode *service,
+                                              const char *name) {
+  YNode *mode_node = map_get(service, "network_mode");
+  if (!mode_node) {
+    return TRUE;
+  }
+  const char *mode = node_string(mode_node);
+  if (!mode || !g_str_equal(mode, "none")) {
+    fail("service '%s': network_mode '%s' is unsupported; only 'none' is "
+         "currently implemented",
+         name, mode ? mode : "(invalid)");
+    return FALSE;
+  }
+  YNode *ports = map_get(service, "ports");
+  YNode *networks = map_get(service, "networks");
+  if ((ports && ports->items && ports->items->len) ||
+      (networks && networks->items && networks->items->len)) {
+    fail("service '%s': network_mode: none cannot be combined with ports or "
+         "networks",
+         name);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static gboolean service_network_disabled(YNode *service) {
+  const char *mode = node_string(map_get(service, "network_mode"));
+  return mode && g_str_equal(mode, "none");
+}
+
 static gboolean unsupported_service_settings(YNode *service, const char *name,
                                              gboolean oci_guest) {
+  if (!validate_service_network_mode(service, name)) {
+    return TRUE;
+  }
   static const char *unsupported[] = {
       "build",
       "command",
@@ -3188,7 +3221,6 @@ static gboolean unsupported_service_settings(YNode *service, const char *name,
       "env_file",
       "volumes",
       "networks",
-      "network_mode",
       "healthcheck",
       "secrets",
       "configs",
@@ -3499,8 +3531,12 @@ static gboolean run_qemu_service(const char *project, const char *root,
   char *drive = g_strdup_printf("file=%s,if=virtio,format=qcow2", disk);
   char *serial = g_strdup_printf("file:%s", log);
   char *disk_basename = g_path_get_basename(disk);
-  char *boot_arguments =
-      oci_guest ? g_strdup("console=ttyS0 panic=1 ip=dhcp") : NULL;
+  gboolean network_disabled = service_network_disabled(service);
+  char *boot_arguments = oci_guest
+                             ? g_strdup(network_disabled
+                                            ? "console=ttyS0 panic=1"
+                                            : "console=ttyS0 panic=1 ip=dhcp")
+                             : NULL;
   char *netdev =
       *forwards ? g_strdup_printf("user,id=quocker-net,%s", forwards) : NULL;
   const char *qargv[128];
@@ -3542,7 +3578,10 @@ static gboolean run_qemu_service(const char *project, const char *root,
   qargv[q++] = "-qmp";
   char *qmp_option = g_strdup_printf("unix:%s,server=on,wait=off", qmp_socket);
   qargv[q++] = qmp_option;
-  if (netdev) {
+  if (network_disabled) {
+    qargv[q++] = "-nic";
+    qargv[q++] = "none";
+  } else if (netdev) {
     qargv[q++] = "-netdev";
     qargv[q++] = netdev;
     qargv[q++] = "-device";
@@ -5108,6 +5147,9 @@ static gboolean host_port_available(const char *service,
 static gboolean preflight_service_ports(const char *name, YNode *service,
                                         void *data) {
   PortPreflight *preflight = data;
+  if (!validate_service_network_mode(service, name)) {
+    return FALSE;
+  }
   GPtrArray *bindings = g_ptr_array_new_with_free_func(
       (GDestroyNotify)port_binding_free);
   gboolean valid = FALSE;
@@ -5195,9 +5237,11 @@ static gboolean up_one(const char *name, YNode *service, void *data) {
   if (ctx->dry_run) {
     gboolean ports_valid = FALSE;
     char *forwards = port_forwards(service, name, &ports_valid, NULL);
-    if (ports_valid) {
+    if (ports_valid && validate_service_network_mode(service, name)) {
       g_print("Would start service %s", name);
-      if (*forwards) {
+      if (service_network_disabled(service)) {
+        g_print(" (network disabled)");
+      } else if (*forwards) {
         g_print(" (QEMU user network: %s)", forwards);
       }
       g_print("\n");

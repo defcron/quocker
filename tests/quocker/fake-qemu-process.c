@@ -43,6 +43,17 @@ static void serve_qmp(int client) {
 
 int main(int argc, char **argv) {
   signal(SIGTERM, handle_term);
+  const char *argv_path = getenv("QUOCKER_FAKE_QEMU_ARGV_FILE");
+  if (argv_path) {
+    FILE *file = fopen(argv_path, "w");
+    if (!file) {
+      return 7;
+    }
+    for (int i = 0; i < argc; i++) {
+      fprintf(file, "%s\n", argv[i]);
+    }
+    fclose(file);
+  }
   const char *pidfile = NULL;
   const char *qmp_option = NULL;
   int daemonize = 0;

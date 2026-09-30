@@ -501,8 +501,10 @@ in user-facing compatibility promises.
 
 ### Phase 6 — Implement networking as a first-class VM feature
 
-1. Define isolated project networks, default networking, service DNS names,
-   aliases, DHCP, and inter-service connectivity.
+1. **Partially implemented:** the default backend is per-VM QEMU user
+   networking; explicit ``network_mode: none`` starts QEMU with no network
+   device. Define isolated project networks, service DNS names, aliases, DHCP,
+   and inter-service connectivity.
 2. **Partially implemented:** translate short and long port mappings, equal-
    sized numeric ranges, TCP/UDP protocols, and numeric IPv4 host IPs to QEMU
    user networking, including dynamic host-port allocation and QMP lookup of

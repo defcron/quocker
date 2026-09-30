@@ -216,11 +216,15 @@ port in the meantime; QEMU performs the final bind.
 ``quocker port SERVICE PORT[/tcp|udp]`` prints static bindings even when the
 VM is stopped; for ephemeral bindings it queries QEMU over the private QMP
 socket and therefore requires a running VM. Guests receive QEMU user-mode
-networking. OCI guests apply
+networking by default. ``network_mode: none`` starts QEMU with no network
+device and omits OCI's DHCP kernel argument; it cannot be combined with
+published ports or service network attachments. Other ``network_mode`` values
+and Compose ``networks`` declarations are rejected until a shared network
+backend is available. OCI guests apply
 ``command``, ``entrypoint``, ``environment``, ``user``, and ``working_dir`` in
 the guest. Local-disk services do not yet implement those application
 overrides. Volumes and Compose network declarations are not yet translated to
-VM resources and are rejected for OCI startup.
+VM resources and are rejected for VM startup.
 
 Kernel catalog selection
 -------------------------

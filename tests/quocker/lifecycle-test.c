@@ -238,6 +238,46 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_false(g_file_test(state_path, G_FILE_TEST_EXISTS));
   g_assert_false(g_file_test(pidfile, G_FILE_TEST_EXISTS));
 
+  char *fake_argv_path = g_build_filename(directory, "fake-qemu-argv", NULL);
+  g_setenv("QUOCKER_FAKE_QEMU_ARGV_FILE", fake_argv_path, TRUE);
+  g_assert_true(g_file_set_contents(
+      compose,
+      "services:\n  app:\n    image: ./disk.qcow2\n    "
+      "network_mode: host\n",
+      -1, &error));
+  g_assert_no_error(error);
+  output = NULL;
+  g_assert_false(run_cli(cli, directory, compose, "up", &output));
+  g_free(output);
+  g_assert_true(g_file_set_contents(
+      compose,
+      "services:\n  app:\n    image: ./disk.qcow2\n    "
+      "network_mode: none\n    ports: [\"80:80\"]\n",
+      -1, &error));
+  g_assert_no_error(error);
+  output = NULL;
+  g_assert_false(run_cli(cli, directory, compose, "up", &output));
+  g_free(output);
+  g_assert_true(g_file_set_contents(
+      compose,
+      "services:\n  app:\n    image: ./disk.qcow2\n    network_mode: none\n",
+      -1, &error));
+  g_assert_no_error(error);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "up", &output));
+  g_assert_nonnull(strstr(output, "app: started"));
+  g_free(output);
+  gchar *fake_argv_contents = NULL;
+  g_assert_true(g_file_get_contents(fake_argv_path, &fake_argv_contents, NULL,
+                                    &error));
+  g_assert_no_error(error);
+  g_assert_nonnull(strstr(fake_argv_contents, "\n-nic\nnone\n"));
+  g_free(fake_argv_contents);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "down", &output));
+  g_free(output);
+  g_unsetenv("QUOCKER_FAKE_QEMU_ARGV_FILE");
+
   char *volumes_directory = g_build_filename(state_directory, "volumes", NULL);
   char *volume_disk =
       g_build_filename(volumes_directory, "persistent.ext4", NULL);
@@ -266,6 +306,7 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_false(g_file_test(overlay_sidecar, G_FILE_TEST_EXISTS));
   g_assert_false(g_file_test(overlay_disk, G_FILE_TEST_EXISTS));
   g_assert_cmpint(g_unlink(base_disk), ==, 0);
+  g_assert_cmpint(g_unlink(fake_argv_path), ==, 0);
   g_assert_cmpint(g_unlink(compose), ==, 0);
   char *lifecycle_lock =
       g_build_filename(state_directory, ".lifecycle.lock", NULL);
@@ -275,6 +316,7 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_cmpint(g_rmdir(quocker_directory), ==, 0);
   g_assert_cmpint(g_rmdir(directory), ==, 0);
   g_free(lifecycle_lock);
+  g_free(fake_argv_path);
   g_free(quocker_directory);
   g_free(volume_lock);
   g_free(volume_disk);
