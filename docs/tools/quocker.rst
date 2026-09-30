@@ -28,6 +28,97 @@ When Quocker is enabled, installation adds Bash completion at
 ``share/bash-completion/completions/quocker``. If the QEMU documentation build
 is enabled, it also generates and installs ``quocker(1)``.
 
+Docker Compose command compatibility
+------------------------------------
+
+The table records the command surface from the `Docker Compose CLI reference
+<https://docs.docker.com/reference/cli/docker/compose/>`_ as checked on
+2026-09-30. “VM-adapted” means the command has a Quocker equivalent with VM
+semantics; it does not imply Docker-compatible behavior or complete flag
+parity. Commands marked “not implemented” are rejected instead of silently
+treated as successful.
+
+.. list-table:: Docker Compose commands and Quocker status
+   :header-rows: 1
+   :widths: 18 20 62
+
+   * - Docker Compose command
+     - Quocker status
+     - Current Quocker behavior
+   * - ``up``
+     - VM-adapted, partial
+     - Starts selected VMs, resolves supported dependencies, and can wait for
+       guest workload readiness.
+   * - ``down``
+     - VM-adapted, partial
+     - Stops VMs and removes saved VM state; named VM volumes require the
+       explicit volume-removal option.
+   * - ``ps``
+     - VM-adapted, partial
+     - Lists configured services with saved VM process state.
+   * - ``logs``
+     - VM-adapted, partial
+     - Reads captured serial output; container log drivers and full formatting
+       options do not apply.
+   * - ``config``
+     - VM-adapted, partial
+     - Validates, resolves, merges, renders, and lists selected Compose model
+       information; full canonical normalization and option parity remain.
+   * - ``start``, ``stop``, ``restart``, ``kill``
+     - VM-adapted, partial
+     - Operate on saved QEMU process state; restart follows supported
+       dependency ordering.
+   * - ``pause``, ``unpause``
+     - VM-adapted, partial
+     - Use QMP VM stop and continue commands.
+   * - ``pull``
+     - VM-adapted, partial
+     - Pulls OCI userland images and prepares VM root disks and kernel assets.
+   * - ``port``
+     - VM-adapted, partial
+     - Reports configured or QMP-discovered host forwarding endpoints.
+   * - ``wait``
+     - VM-adapted, partial
+     - Waits for selected QEMU VMs to stop; it does not return OCI workload
+       exit codes as container status.
+   * - ``rm``
+     - VM-adapted, partial
+     - Removes stopped VM state and overlays; volume removal follows Quocker's
+       explicit storage rules.
+   * - ``version``
+     - Implemented
+     - Reports the Quocker interface and its QEMU base version.
+   * - ``volumes``
+     - Not Compose-compatible
+     - Quocker currently provides ``quocker volume ls|df|inspect|rm`` instead;
+       the Compose ``volumes`` verb is not an alias.
+   * - ``build``, ``commit``, ``push``, ``publish``
+     - Not implemented
+     - Image build and publication need an explicitly defined VM artifact
+       workflow; Quocker does not run Docker builds.
+   * - ``create``, ``run``
+     - Not implemented
+     - There is no create-without-start or one-off VM command yet.
+   * - ``attach``, ``exec``, ``cp``
+     - Not implemented
+     - Guest agent/console transport and file-copy semantics are not available.
+   * - ``events``, ``images``, ``ls``, ``stats``, ``top``
+     - Not implemented
+     - QEMU event streaming, deployed-image inventory, global project
+       discovery, guest resource statistics, and guest process listing are
+       not implemented. ``config --images`` only lists configured references.
+   * - ``scale``, ``watch``
+     - Not implemented
+     - VM instance identity and safe recreation/watch behavior are not defined.
+   * - ``alpha``, ``bridge``, ``convert``
+     - Not implemented
+     - Docker Compose experimental commands and conversion tools have no
+       Quocker equivalent yet.
+
+This command inventory does not describe option parity. The shared options
+and each command's supported flags are documented below; unimplemented
+commands remain outside Quocker's compatibility claims.
+
 Compose file
 ------------
 

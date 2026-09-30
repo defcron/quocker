@@ -381,9 +381,11 @@ in user-facing compatibility promises.
 
 ### Phase 3 — Reach useful Compose CLI compatibility
 
-1. Inventory the pinned Docker Compose command and flag surface and label each
-   command as VM-equivalent, adaptable, informational, or intentionally
-   unsupported.
+1. **Command inventory documented; flag inventory open.** The Quocker manual
+   maps the current Docker Compose CLI command set to implemented VM-adapted,
+   partial, or unimplemented Quocker behavior. Record the option surface and
+   precise per-command flag parity next, using the dated upstream CLI reference
+   linked from the manual.
 2. Complete core commands and their normal flags: `up`, `down`, `ps`, `logs`,
    `config`, `start`, `stop`, `restart`, `kill`, `rm`, `pause`, `unpause`,
    `pull`, `build`, `create`, `run`, `exec`, `cp`, `port`, `events`, `top`,
