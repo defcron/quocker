@@ -52,11 +52,20 @@ _quocker() {
         up)
             command_options='--dry-run -d --wait --wait-timeout'
         ;;
-        start|stop|restart|pause|unpause)
+        start|pause|unpause)
             command_options='--dry-run'
             ;;
+        stop|restart)
+            command_options='--dry-run -t --timeout'
+            if [[ $prev == -t || $prev == --timeout ]]; then
+                return
+            fi
+            ;;
         down)
-            command_options='--dry-run --volumes -v'
+            command_options='--dry-run --volumes -v -t --timeout'
+            if [[ $prev == -t || $prev == --timeout ]]; then
+                return
+            fi
             ;;
         ps)
             command_options='-q --quiet'

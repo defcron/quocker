@@ -405,7 +405,10 @@ in user-facing compatibility promises.
    exit codes.
    `up --wait` waits for OCI workload exec readiness and accepts
    `--wait-timeout`; local bootable disks can only be checked for a live QEMU
-   process. Crash recovery and complete flag compatibility remain unfinished.
+   process. `stop`, `restart`, and `down` accept `-t`/`--timeout SECONDS`;
+   the default grace period is ten seconds and zero requests immediate forced
+   termination. Other timeout behavior and complete flag compatibility remain
+   unfinished.
    Implement only after Phase 0 defines
    VM semantics; explain commands with no meaningful VM equivalent.
    `port SERVICE PRIVATE_PORT[/PROTOCOL]` reports configured static host
@@ -423,8 +426,8 @@ in user-facing compatibility promises.
    required profiled dependencies are rejected. Optional dependencies marked
    ``required: false`` warn and skip missing or inactive-profile services.
    Complete profile validation, scaling
-   where appropriate, recreation policies, orphan handling, timeout handling, and
-   interruption/signals.
+   where appropriate, recreation policies, orphan handling, readiness timeout
+   handling for other lifecycle operations, and interruption/signals.
 4. Match project naming, labels/metadata, project listing, working directory,
    file precedence, exit codes, and common output/TTY behavior.
 5. **Entry-point compatibility verified:** both `quocker compose ...` and the

@@ -46,6 +46,37 @@ static gboolean run_cli(const char *cli, const char *directory,
                              command, NULL, stdout_text);
 }
 
+static void assert_stop_timeout_short_option(const char *cli,
+                                             const char *directory,
+                                             const char *compose_file) {
+  char *arguments[] = {(char *)cli,
+                       (char *)"--project-directory",
+                       (char *)directory,
+                       (char *)"--project-name",
+                       (char *)"lifecycle",
+                       (char *)"-f",
+                       (char *)compose_file,
+                       (char *)"stop",
+                       (char *)"--dry-run",
+                       (char *)"-t",
+                       (char *)"0",
+                       (char *)"app",
+                       NULL};
+  gchar *stdout_text = NULL;
+  gchar *stderr_text = NULL;
+  gint status = 0;
+  GError *error = NULL;
+  g_assert_true(g_spawn_sync(NULL, arguments, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+                             &stdout_text, &stderr_text, &status, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_spawn_check_wait_status(status, &error));
+  g_assert_no_error(error);
+  g_assert_cmpstr(stdout_text, ==, "Would stop service app\n");
+  g_assert_cmpstr(stderr_text, ==, "");
+  g_free(stdout_text);
+  g_free(stderr_text);
+}
+
 static gboolean remove_cli_volumes(const char *cli, const char *directory,
                                    const char *compose_file) {
   char *arguments[] = {(char *)cli,
@@ -325,6 +356,7 @@ static void test_stop_preserves_vm_state(void) {
       "services:\n  app:\n    image: ./disk.qcow2\n    network_mode: none\n",
       -1, &error));
   g_assert_no_error(error);
+  g_setenv("QUOCKER_FAKE_QEMU_IGNORE_TERM", "1", TRUE);
   output = NULL;
   g_assert_true(run_cli(cli, directory, compose, "up", &output));
   g_assert_nonnull(strstr(output, "app: started"));
@@ -336,8 +368,19 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_nonnull(strstr(fake_argv_contents, "\n-nic\nnone\n"));
   g_free(fake_argv_contents);
   output = NULL;
-  g_assert_true(run_cli(cli, directory, compose, "down", &output));
+  g_assert_true(run_cli_for_project(cli, directory, compose, "lifecycle",
+                                    "app", "stop", "--timeout=0", &output));
+  g_assert_nonnull(strstr(output, "app: stopped"));
   g_free(output);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "up", &output));
+  g_free(output);
+  output = NULL;
+  g_assert_true(run_cli_for_project(cli, directory, compose, "lifecycle",
+                                    "app", "down", "--timeout=0", &output));
+  g_free(output);
+  g_unsetenv("QUOCKER_FAKE_QEMU_IGNORE_TERM");
+  assert_stop_timeout_short_option(cli, directory, compose);
   g_unsetenv("QUOCKER_FAKE_QEMU_ARGV_FILE");
 
   output = NULL;

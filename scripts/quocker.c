@@ -85,6 +85,7 @@ typedef struct Options {
   gboolean wait_for_ready;
   gboolean wait_timeout_set;
   guint wait_timeout_seconds;
+  guint shutdown_timeout_seconds;
   gboolean dry_run;
   int signal_number;
   gboolean remove_volumes;
@@ -6178,6 +6179,7 @@ typedef struct DownContext {
   YNode *services;
   gboolean remove_volumes;
   gboolean dry_run;
+  guint shutdown_timeout_seconds;
 } DownContext;
 
 typedef struct ServiceSignalContext {
@@ -6185,7 +6187,43 @@ typedef struct ServiceSignalContext {
   const char *directory;
   gboolean dry_run;
   int signal_number;
+  guint shutdown_timeout_seconds;
 } ServiceSignalContext;
+
+static gboolean terminate_qemu_for_compose(
+    const char *name, const char *project, const char *directory, pid_t pid,
+    guint64 start_time, guint timeout_seconds) {
+  if (signal_process(pid, project, name, start_time, SIGTERM) < 0 &&
+      errno != ESRCH) {
+    fail("service '%s': could not send SIGTERM: %s", name,
+         g_strerror(errno));
+    return FALSE;
+  }
+  gint64 deadline = g_get_monotonic_time() +
+                    (gint64)timeout_seconds * G_TIME_SPAN_SECOND;
+  while (timeout_seconds && g_get_monotonic_time() < deadline &&
+         process_running(pid, project, name, start_time)) {
+    g_usleep(100000);
+  }
+  if (process_running(pid, project, name, start_time)) {
+    if (signal_process(pid, project, name, start_time, SIGKILL) < 0 &&
+        errno != ESRCH) {
+      fail("service '%s': could not send SIGKILL after timeout: %s", name,
+           g_strerror(errno));
+      return FALSE;
+    }
+    gint64 kill_deadline = g_get_monotonic_time() + 2 * G_TIME_SPAN_SECOND;
+    while (g_get_monotonic_time() < kill_deadline &&
+           process_running(pid, project, name, start_time)) {
+      g_usleep(100000);
+    }
+  }
+  if (process_running(pid, project, name, start_time)) {
+    fail("service '%s': QEMU did not stop after SIGKILL", name);
+    return FALSE;
+  }
+  return TRUE;
+}
 
 static gboolean stop_one(const char *name, YNode *service, void *data) {
   ServiceSignalContext *ctx = data;
@@ -6202,33 +6240,10 @@ static gboolean stop_one(const char *name, YNode *service, void *data) {
     }
     g_print("[%s] %s: not running\n", ctx->project, name);
   } else {
-    if (signal_process(pid, ctx->project, name,
-                       state_process_start_time(ctx->directory, name),
-                       SIGTERM) < 0 &&
-        errno != ESRCH) {
-      fail("service '%s': could not send SIGTERM: %s", name,
-           g_strerror(errno));
-      return FALSE;
-    }
-    for (guint i = 0; i < 100 && process_running(pid, ctx->project, name, state_process_start_time(ctx->directory, name)); i++) {
-      g_usleep(100000);
-    }
-    if (process_running(pid, ctx->project, name, state_process_start_time(ctx->directory, name))) {
-      if (signal_process(pid, ctx->project, name,
-                         state_process_start_time(ctx->directory, name),
-                         SIGKILL) < 0 &&
-          errno != ESRCH) {
-        fail("service '%s': could not send SIGKILL after timeout: %s", name,
-             g_strerror(errno));
-        return FALSE;
-      }
-      for (guint i = 0; i < 20 && process_running(pid, ctx->project, name, state_process_start_time(ctx->directory, name));
-           i++) {
-        g_usleep(100000);
-      }
-    }
-    if (process_running(pid, ctx->project, name, state_process_start_time(ctx->directory, name))) {
-      fail("service '%s': QEMU did not stop after SIGKILL", name);
+    if (!terminate_qemu_for_compose(
+            name, ctx->project, ctx->directory, pid,
+            state_process_start_time(ctx->directory, name),
+            ctx->shutdown_timeout_seconds)) {
       return FALSE;
     }
     g_print("[%s] %s: stopped\n", ctx->project, name);
@@ -6327,31 +6342,9 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
     return FALSE;
   }
   if (running) {
-    if (signal_process(pid, ctx->project, name, start_time, SIGTERM) < 0 &&
-        errno != ESRCH) {
-      fail("service '%s': could not send SIGTERM: %s", name,
-           g_strerror(errno));
-      return FALSE;
-    }
-    for (guint i = 0;
-         i < 100 && process_running(pid, ctx->project, name, start_time); i++) {
-      g_usleep(100000);
-    }
-    if (process_running(pid, ctx->project, name, start_time)) {
-      if (signal_process(pid, ctx->project, name, start_time, SIGKILL) < 0 &&
-          errno != ESRCH) {
-        fail("service '%s': could not send SIGKILL after timeout: %s", name,
-             g_strerror(errno));
-        return FALSE;
-      }
-      for (guint i = 0;
-           i < 20 && process_running(pid, ctx->project, name, start_time);
-           i++) {
-        g_usleep(100000);
-      }
-    }
-    if (process_running(pid, ctx->project, name, start_time)) {
-      fail("service '%s': QEMU did not stop after SIGKILL", name);
+    if (!terminate_qemu_for_compose(name, ctx->project, ctx->directory, pid,
+                                    start_time,
+                                    ctx->shutdown_timeout_seconds)) {
       return FALSE;
     }
     g_print("[%s] %s: stopped\n", ctx->project, name);
@@ -6799,6 +6792,7 @@ static void usage(FILE *file) {
           "      --env-file FILE         Set interpolation environment file\n"
           "      --profile PROFILE       Enable a service profile\n\n"
           "  up --wait [--wait-timeout SEC] Wait for guest workloads to be ready\n"
+          "  stop|restart|down -t, --timeout SEC Graceful stop timeout\n"
           "  config --format yaml|json   Select config output format\n"
           "  config -o, --output FILE   Write rendered config to a file\n"
           "  config --services|--profiles|--images  List config entries\n"
@@ -6848,6 +6842,7 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
   opts->profiles = g_ptr_array_new_with_free_func(g_free);
   opts->services = g_ptr_array_new_with_free_func(g_free);
   opts->signal_number = SIGKILL;
+  opts->shutdown_timeout_seconds = 10;
   const char *env_profiles = g_getenv("COMPOSE_PROFILES");
   if (env_profiles) {
     gchar **parts = g_strsplit(env_profiles, ",", -1);
@@ -6919,6 +6914,30 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       }
       opts->wait_timeout_set = TRUE;
       opts->wait_timeout_seconds = (guint)seconds;
+    } else if (opts->command &&
+               (g_str_equal(arg, "-t") || g_str_equal(arg, "--timeout") ||
+                g_str_has_prefix(arg, "--timeout="))) {
+      gboolean supports_timeout =
+          g_str_equal(opts->command, "stop") ||
+          g_str_equal(opts->command, "restart") ||
+          g_str_equal(opts->command, "down");
+      if (!supports_timeout) {
+        fail("--timeout is supported with stop, restart, and down");
+        return FALSE;
+      }
+      const char *value = NULL;
+      if (g_str_has_prefix(arg, "--timeout=")) {
+        value = arg + strlen("--timeout=");
+      } else if (++i < argc) {
+        value = argv[i];
+      }
+      char *end = NULL;
+      guint64 seconds = value ? g_ascii_strtoull(value, &end, 10) : 0;
+      if (!value || !*value || end == value || *end || seconds > G_MAXUINT) {
+        fail("--timeout must be a non-negative number of seconds");
+        return FALSE;
+      }
+      opts->shutdown_timeout_seconds = (guint)seconds;
     } else if (opts->command && g_str_equal(arg, "--dry-run") &&
                (g_str_equal(opts->command, "up") ||
                 g_str_equal(opts->command, "start") ||
@@ -7662,11 +7681,13 @@ int main(int argc, char **argv) {
                          lifecycle_lock_fd);
   } else if (g_str_equal(opts.command, "stop")) {
     ServiceSignalContext context = {project_lower, directory, opts.dry_run,
-                                    SIGTERM};
+                                    SIGTERM,
+                                    opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, stop_one, &context);
   } else if (g_str_equal(opts.command, "kill")) {
     ServiceSignalContext context = {project_lower, directory, opts.dry_run,
-                                    opts.signal_number};
+                                    opts.signal_number,
+                                    opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, kill_one, &context);
   } else if (g_str_equal(opts.command, "pause") ||
              g_str_equal(opts.command, "unpause")) {
@@ -7677,7 +7698,8 @@ int main(int argc, char **argv) {
     ok = for_down_services(services, &opts, control_one, &context);
   } else if (g_str_equal(opts.command, "restart")) {
     ServiceSignalContext stop_context = {project_lower, directory,
-                                         opts.dry_run, SIGTERM};
+                                         opts.dry_run, SIGTERM,
+                                         opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, stop_one, &stop_context);
     if (ok) {
       ok = run_up_services(services, &opts, project_lower, root, directory,
@@ -7689,7 +7711,8 @@ int main(int argc, char **argv) {
     DownContext context = {project_lower, directory, services,
                            opts.remove_volumes ||
                                g_str_equal(opts.command, "rm"),
-                           opts.dry_run};
+                           opts.dry_run,
+                           opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, down_one, &context);
   } else if (g_str_equal(opts.command, "ps")) {
     if (!opts.quiet) {

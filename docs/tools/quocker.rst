@@ -149,8 +149,9 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
        scaling, timeout, menu, watch, and interactive confirmation options.
        See the `Compose up reference <https://docs.docker.com/reference/cli/docker/compose/up/>`_.
    * - ``down``
-     - ``--volumes``/``-v``, ``--dry-run``, and service names.
-     - ``--remove-orphans``, ``--rmi``, and ``-t``/``--timeout``. See the
+     - ``--volumes``/``-v``, ``--dry-run``, ``-t``/``--timeout SECONDS``
+       (default 10), and service names.
+     - ``--remove-orphans`` and ``--rmi``. See the
        `Compose down reference <https://docs.docker.com/reference/cli/docker/compose/down/>`_.
    * - ``ps``
      - Service names; output is a Quocker VM table with saved state, PID,
@@ -176,9 +177,10 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
        resolution. See the
        `Compose config reference <https://docs.docker.com/reference/cli/docker/compose/config/>`_.
    * - ``start``, ``stop``, ``restart``, ``pause``, ``unpause``
-     - Service names; ``--dry-run`` for lifecycle planning.
-     - Docker's timeout, attach, and interactive controls. These commands
-       manage existing QEMU processes and do not create containers.
+     - Service names; ``--dry-run`` for lifecycle planning. ``stop`` and
+       ``restart`` accept ``-t``/``--timeout SECONDS`` (default 10).
+     - Attach and interactive controls. These commands manage existing QEMU
+       processes and do not create containers.
    * - ``kill``
      - Service names, ``-s``/``--signal SIGNAL``, and ``--dry-run``.
      - Container-specific signal behavior and attach/output controls.
@@ -583,10 +585,12 @@ selected saved QEMU processes stop and checks their recorded process identity.
 It requires saved state for each selected service; guest workload exit codes
 are not reported yet.
 ``start`` starts a previously created VM from its saved state and disk;
-``up`` is required to create the VM the first time. ``stop`` requests graceful
-QEMU termination, waits up to ten seconds, then force-kills QEMU if necessary,
-while preserving the VM state and disk. ``restart`` stops selected services
-in reverse dependency order and starts them in dependency order. ``kill`` sends
+``up`` is required to create the VM the first time. ``stop``, ``restart``, and
+``down`` request graceful QEMU termination, wait ten seconds by default, then
+force-kill QEMU if necessary. Set ``-t``/``--timeout SECONDS`` to change the
+grace period; zero skips directly to SIGKILL. ``stop`` preserves VM state and
+disks. ``restart`` stops selected services in reverse dependency order and
+starts them in dependency order. ``kill`` sends
 ``SIGKILL`` by default; ``-s``/``--signal`` accepts a signal name or number.
 State-changing lifecycle commands and volume removal serialize on a
 per-project lock, so separate local Quocker processes cannot update the same

@@ -42,7 +42,10 @@ static void serve_qmp(int client) {
 }
 
 int main(int argc, char **argv) {
-  signal(SIGTERM, handle_term);
+  const char *ignore_term = getenv("QUOCKER_FAKE_QEMU_IGNORE_TERM");
+  signal(SIGTERM, ignore_term && strcmp(ignore_term, "1") == 0
+                    ? SIG_IGN
+                    : handle_term);
   const char *argv_path = getenv("QUOCKER_FAKE_QEMU_ARGV_FILE");
   if (argv_path) {
     FILE *file = fopen(argv_path, "w");
