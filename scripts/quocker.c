@@ -96,6 +96,7 @@ typedef struct Options {
   gboolean logs_no_prefix;
   gboolean quiet;
   gboolean ps_all;
+  gboolean ps_services;
   GPtrArray *ps_statuses;
   gboolean short_version;
   GPtrArray *services;
@@ -6430,6 +6431,7 @@ typedef struct ListContext {
   const char *directory;
   gboolean quiet;
   gboolean all;
+  gboolean services;
   GPtrArray *statuses;
 } ListContext;
 
@@ -6497,6 +6499,11 @@ static gboolean ps_one(const char *name, YNode *service, void *data) {
   }
   if (ctx->quiet) {
     g_print("%s-%s\n", ctx->project, name);
+    g_free(disk);
+    return TRUE;
+  }
+  if (ctx->services) {
+    g_print("%s\n", name);
     g_free(disk);
     return TRUE;
   }
@@ -6857,6 +6864,7 @@ static void usage(FILE *file) {
           "  up --wait [--wait-timeout SEC] Wait for guest workloads to be ready\n"
           "  stop|restart|down -t, --timeout SEC Graceful stop timeout\n"
           "  ps -a, --all              Include stopped saved VMs\n"
+          "  ps --services             Print service names only\n"
           "  ps --status running|exited Filter saved VM state\n"
           "  ps --filter status=STATE  Filter saved VM state\n"
           "  config --format yaml|json   Select config output format\n"
@@ -7086,6 +7094,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
                (g_str_equal(arg, "-a") || g_str_equal(arg, "--all"))) {
       opts->ps_all = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
+               g_str_equal(arg, "--services")) {
+      opts->ps_services = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "ps") &&
                (g_str_equal(arg, "--status") ||
                 g_str_has_prefix(arg, "--status=") ||
                 g_str_equal(arg, "--filter") ||
@@ -7191,6 +7202,11 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
   }
   if (!opts->command) {
     usage(stderr);
+    return FALSE;
+  }
+  if (g_str_equal(opts->command, "ps") && opts->ps_services &&
+      opts->quiet) {
+    fail("ps --services cannot be combined with --quiet");
     return FALSE;
   }
   if (g_str_equal(opts->command, "version") &&
@@ -7828,11 +7844,11 @@ int main(int argc, char **argv) {
                            opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, down_one, &context);
   } else if (g_str_equal(opts.command, "ps")) {
-    if (!opts.quiet) {
+    if (!opts.quiet && !opts.ps_services) {
       g_print("NAME\tSTATE\tPID\tDISK\n");
     }
     ListContext context = {project_lower, directory, opts.quiet, opts.ps_all,
-                           opts.ps_statuses};
+                           opts.ps_services, opts.ps_statuses};
     ok = for_services(services, &opts, ps_one, &context);
   } else if (g_str_equal(opts.command, "images")) {
     g_print("SERVICE\tIMAGE\tVM_STATE\n");

@@ -390,7 +390,8 @@ in user-facing compatibility promises.
    `ps` defaults to running saved VMs and accepts `-a`/`--all` to include
    stopped VMs. `--status` and `--filter status=` select the representable
    `running` and `exited` process states; Docker-only lifecycle statuses are
-   rejected. Keep this inventory current as flags are implemented;
+   rejected. `ps --services` prints matching service names. Keep this inventory
+   current as flags are implemented;
    fill in exact option-by-option coverage for less common Compose commands.
 2. Complete core commands and their normal flags: `up`, `down`, `ps`, `logs`,
    `config`, `start`, `stop`, `restart`, `kill`, `rm`, `pause`, `unpause`,

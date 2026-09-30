@@ -82,6 +82,8 @@ int main(int argc, char **argv) {
   assert_quiet_ps(cli, argv[1], directory, "-q", "--all", "--status",
                   "running", "");
   assert_quiet_ps(cli, argv[1], directory, "-q", NULL, NULL, NULL, "");
+  assert_quiet_ps(cli, argv[1], directory, "--services", "--all", NULL,
+                  NULL, "app\n");
   char *invalid_arguments[] = {(char *)cli,
                                (char *)"--project-directory",
                                directory,
