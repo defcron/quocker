@@ -104,6 +104,18 @@ int main(int argc, char **argv) {
                   NULL, NULL, "app\nghost\n");
   assert_quiet_ps(cli, argv[1], directory, "--services", "--all", NULL,
                   NULL, "--orphans=false", "app\n");
+  char *json_expected = g_strdup_printf(
+      "{\"ID\":\"ps-quiet-test-app\",\"Name\":\"ps-quiet-test-app\","
+      "\"Project\":\"ps-quiet-test\",\"Service\":\"app\","
+      "\"State\":\"exited\",\"PID\":null,\"Disk\":\"%s/app.qcow2\"}\n"
+      "{\"ID\":\"ps-quiet-test-ghost\","
+      "\"Name\":\"ps-quiet-test-ghost\",\"Project\":\"ps-quiet-test\","
+      "\"Service\":\"ghost\",\"State\":\"exited\",\"PID\":null,"
+      "\"Disk\":\"%s/ghost.qcow2\"}\n",
+      state_directory, state_directory);
+  assert_quiet_ps(cli, argv[1], directory, "--format=json", "--all", NULL,
+                  NULL, NULL, json_expected);
+  g_free(json_expected);
   char *invalid_arguments[] = {(char *)cli,
                                (char *)"--project-directory",
                                directory,

@@ -160,12 +160,16 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
        Output includes VM state, PID,
        and disk path; ``-q``/``--quiet`` prints generated VM names, one per
        line; ``--services`` prints matching service names only and cannot be
-       combined with quiet output. ``--status running|exited`` and
+       combined with quiet output. ``--format table`` selects the default
+       table; ``--format json`` prints JSON Lines with VM name, project,
+       service, running/exited state, PID, and disk path. This VM-specific
+       object schema does not include Docker container command, health, exit
+       code, or publisher fields. ``--status running|exited`` and
        ``--filter status=running`` /
        ``status=exited`` select VM process states. Other Docker statuses
        (including ``paused``, ``created``, and ``dead``) are rejected because
        Quocker tracks QEMU process state rather than container lifecycle state.
-     - ``--format`` and ``--no-trunc``.
+     - Go-template formatting and ``--no-trunc``.
        Project selection uses Quocker's
        shared ``-p``/``--project-name`` option. See the
        `Compose ps reference <https://docs.docker.com/reference/cli/docker/compose/ps/>`_.
@@ -570,6 +574,11 @@ container statuses do not map to Quocker's saved VM state and are rejected.
 VMs, respecting the running default, ``--all``, status filters, and orphan
 selection. By default, saved VMs whose service is absent from the Compose file
 are included; use ``--orphans=false`` to suppress them.
+``quocker ps --format json`` writes one JSON object per matching VM, with
+``ID``, ``Name``, ``Project``, ``Service``, ``State``, ``PID``, and ``Disk``
+fields. ``ID`` and ``Name`` use Quocker's generated VM name. Docker container
+command, health, exit-code, and publisher fields have no equivalent in this
+output schema.
 ``quocker logs [SERVICE]`` shows serial output;
 ``quocker logs --tail 20`` shows only its last twenty non-empty lines.
 ``quocker logs --no-log-prefix`` omits the service name prefix, and

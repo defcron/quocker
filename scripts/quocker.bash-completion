@@ -38,6 +38,10 @@ _quocker() {
             COMPREPLY=( $(compgen -W 'status=running status=exited' -- "$cur") )
             return
             ;;
+        --format)
+            COMPREPLY=( $(compgen -W 'table json' -- "$cur") )
+            return
+            ;;
     esac
 
     if (( COMP_CWORD <= command_index )); then
@@ -76,7 +80,7 @@ _quocker() {
             fi
             ;;
         ps)
-            command_options='-a --all -q --quiet --services --orphans --status --filter'
+            command_options='-a --all -q --quiet --services --orphans --status --filter --format'
             ;;
         rm)
             command_options='--volumes -v -f'

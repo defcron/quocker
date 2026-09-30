@@ -98,6 +98,7 @@ typedef struct Options {
   gboolean ps_all;
   gboolean ps_orphans;
   gboolean ps_services;
+  char *ps_format;
   GPtrArray *ps_statuses;
   gboolean short_version;
   GPtrArray *services;
@@ -6433,6 +6434,7 @@ typedef struct ListContext {
   gboolean quiet;
   gboolean all;
   gboolean services;
+  gboolean json;
   GPtrArray *statuses;
 } ListContext;
 
@@ -6506,6 +6508,42 @@ static gboolean ps_one(const char *name, YNode *service, void *data) {
   if (ctx->services) {
     g_print("%s\n", name);
     g_free(disk);
+    return TRUE;
+  }
+  if (ctx->json) {
+    char *vm_name = g_strdup_printf("%s-%s", ctx->project, name);
+    JsonBuilder *builder = json_builder_new();
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "ID");
+    json_builder_add_string_value(builder, vm_name);
+    json_builder_set_member_name(builder, "Name");
+    json_builder_add_string_value(builder, vm_name);
+    json_builder_set_member_name(builder, "Project");
+    json_builder_add_string_value(builder, ctx->project);
+    json_builder_set_member_name(builder, "Service");
+    json_builder_add_string_value(builder, name);
+    json_builder_set_member_name(builder, "State");
+    json_builder_add_string_value(builder, active ? "running" : "exited");
+    json_builder_set_member_name(builder, "PID");
+    if (active) {
+      json_builder_add_int_value(builder, pid);
+    } else {
+      json_builder_add_null_value(builder);
+    }
+    json_builder_set_member_name(builder, "Disk");
+    json_builder_add_string_value(builder, disk);
+    json_builder_end_object(builder);
+    JsonNode *root = json_builder_get_root(builder);
+    JsonGenerator *generator = json_generator_new();
+    json_generator_set_root(generator, root);
+    char *line = json_generator_to_data(generator, NULL);
+    g_print("%s\n", line);
+    g_free(line);
+    g_object_unref(generator);
+    json_node_free(root);
+    g_object_unref(builder);
+    g_free(disk);
+    g_free(vm_name);
     return TRUE;
   }
   char *pid_text = active ? g_strdup_printf("%d", pid) : g_strdup("-");
@@ -6921,6 +6959,7 @@ static void usage(FILE *file) {
           "  ps -a, --all              Include stopped saved VMs\n"
           "  ps --orphans[=BOOL]       Include undeclared saved VMs (default true)\n"
           "  ps --services             Print service names only\n"
+          "  ps --format table|json    Select table or JSON Lines output\n"
           "  ps --status running|exited Filter saved VM state\n"
           "  ps --filter status=STATE  Filter saved VM state\n"
           "  config --format yaml|json   Select config output format\n"
@@ -7154,6 +7193,22 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
                g_str_equal(arg, "--services")) {
       opts->ps_services = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
+               (g_str_equal(arg, "--format") ||
+                g_str_has_prefix(arg, "--format="))) {
+      const char *value = NULL;
+      if (g_str_has_prefix(arg, "--format=")) {
+        value = arg + strlen("--format=");
+      } else if (++i < argc) {
+        value = argv[i];
+      }
+      if (!value || (!g_str_equal(value, "table") &&
+                     !g_str_equal(value, "json"))) {
+        fail("ps --format must be 'table' or 'json'");
+        return FALSE;
+      }
+      g_free(opts->ps_format);
+      opts->ps_format = g_strdup(value);
+    } else if (opts->command && g_str_equal(opts->command, "ps") &&
                g_str_equal(arg, "--orphans")) {
       opts->ps_orphans = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
@@ -7278,6 +7333,11 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
   if (g_str_equal(opts->command, "ps") && opts->ps_services &&
       opts->quiet) {
     fail("ps --services cannot be combined with --quiet");
+    return FALSE;
+  }
+  if (g_str_equal(opts->command, "ps") && opts->ps_format &&
+      (opts->quiet || opts->ps_services)) {
+    fail("ps --format cannot be combined with --quiet or --services");
     return FALSE;
   }
   if (g_str_equal(opts->command, "version") &&
@@ -7915,11 +7975,13 @@ int main(int argc, char **argv) {
                            opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, down_one, &context);
   } else if (g_str_equal(opts.command, "ps")) {
-    if (!opts.quiet && !opts.ps_services) {
+    gboolean json = g_str_equal(opts.ps_format ? opts.ps_format : "table",
+                                "json");
+    if (!opts.quiet && !opts.ps_services && !json) {
       g_print("NAME\tSTATE\tPID\tDISK\n");
     }
     ListContext context = {project_lower, directory, opts.quiet, opts.ps_all,
-                           opts.ps_services, opts.ps_statuses};
+                           opts.ps_services, json, opts.ps_statuses};
     ok = for_services(services, &opts, ps_one, &context);
     if (ok) {
       ok = ps_list_orphans(&context, services, opts.ps_orphans,
@@ -7987,6 +8049,7 @@ int main(int argc, char **argv) {
   g_free(opts.config_format);
   g_free(opts.config_output_path);
   g_free(opts.config_list_mode);
+  g_free(opts.ps_format);
   g_free(opts.port_spec);
   g_free(opts.project_name);
   g_free(opts.project_directory);
