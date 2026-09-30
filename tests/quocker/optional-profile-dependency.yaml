@@ -1,0 +1,10 @@
+services:
+  app:
+    image: ./app.qcow2
+    depends_on:
+      optional-service:
+        condition: service_started
+        required: false
+  optional-service:
+    image: ./optional-service.qcow2
+    profiles: [optional]

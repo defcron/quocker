@@ -115,7 +115,9 @@ has a meaningful VM equivalent.
   used by the pinned schema and refuses to run if the snapshot introduces an
   unimplemented standard assertion keyword. Phase 3 now orders
   selected services after their `depends_on` dependencies and offers
-  `up --dry-run`. VM lifecycle `start`, `stop`, `restart`, and `kill` commands
+  `up --dry-run`; optional dependencies marked `required: false` warn and skip
+  missing or inactive-profile services. VM lifecycle `start`, `stop`,
+  `restart`, and `kill` commands
   now use saved QEMU process/disk state; stop preserves VM state, restart
   follows dependency ordering, and kill accepts named/numeric signals. A
   per-project lifecycle lock serializes state-changing commands and volume
@@ -370,7 +372,9 @@ in user-facing compatibility promises.
    dependency restart behavior await guest readiness and recreation tracking.
    Explicitly targeted services bypass inactive-profile filtering; selected
    target profiles become active for dependency validation, and incompatible
-   profiled dependencies are rejected. Complete profile validation, scaling
+   required profiled dependencies are rejected. Optional dependencies marked
+   ``required: false`` warn and skip missing or inactive-profile services.
+   Complete profile validation, scaling
    where appropriate, recreation policies, orphan handling, timeout handling, and
    interruption/signals.
 4. Match project naming, labels/metadata, project listing, working directory,

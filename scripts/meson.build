@@ -265,6 +265,15 @@ if not get_option('quocker').disabled()
          args: [files('../tests/quocker/dependencies-order.yaml')],
          env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
          suite: ['quocker'])
+    quocker_optional_dependency_test = executable(
+      'quocker-optional-dependency-test',
+      files('../tests/quocker/optional-dependency-test.c'),
+      dependencies: [glib])
+    test('quocker-optional-profile-dependency',
+         quocker_optional_dependency_test,
+         args: [files('../tests/quocker/optional-profile-dependency.yaml')],
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     test('quocker-config-duplicate-key', quocker,
          args: ['-f', files('../tests/quocker/duplicate-key.yaml'), 'config', '--quiet'],
          should_fail: true, suite: ['quocker'])

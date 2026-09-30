@@ -4991,6 +4991,20 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
       fail("service '%s' depends on undefined service '%s'", name, dependency);
       return FALSE;
     }
+    if (order->validate_runtime_conditions &&
+        !service_profiles_active(dependency_service,
+                                 order->active_profiles)) {
+      if (!required_dependency) {
+        g_warning("service '%s' has optional dependency '%s' gated by an "
+                  "inactive profile; skipping it",
+                  name, dependency);
+        continue;
+      }
+      fail("service '%s' depends on service '%s' gated by an inactive "
+           "profile",
+           name, dependency);
+      return FALSE;
+    }
     if (!up_order_visit(order, dependency)) {
       return FALSE;
     }
