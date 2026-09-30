@@ -108,6 +108,14 @@ static const char *TAG_MAP = "tag:yaml.org,2002:map";
 static const char *TAG_SEQ = "tag:yaml.org,2002:seq";
 static const char *TAG_NULL = "tag:yaml.org,2002:null";
 
+static const char *const unsupported_service_fields[] = {
+    "build", "command", "entrypoint", "environment", "env_file",
+    "volumes", "networks", "healthcheck", "secrets", "configs",
+    "container_name", "hostname", "user", "working_dir", "privileged",
+    "cap_add", "cap_drop", "devices", "tmpfs", "expose", "read_only",
+    "stdin_open", "tty", "restart", "develop", NULL,
+};
+
 static char *user_kernel_catalog_path(void) {
   return g_build_filename(g_get_user_cache_dir(), "quocker", "kernels.json",
                           NULL);
@@ -1253,6 +1261,92 @@ static gint compare_string_pointers(gconstpointer left, gconstpointer right) {
   const char *const *left_string = left;
   const char *const *right_string = right;
   return g_strcmp0(*left_string, *right_string);
+}
+
+static gboolean service_image_is_local(YNode *service, const char *root);
+
+static gboolean string_in_list(const char *value,
+                               const char *const *items) {
+  for (const char *const *item = items; *item; item++) {
+    if (g_str_equal(value, *item)) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+static const char *service_field_capability(const char *field,
+                                            gboolean local_image,
+                                            YNode *service) {
+  static const char *const oci_guest_fields[] = {
+      "command", "entrypoint", "environment", "env_file", "volumes",
+      "user",    "working_dir", NULL};
+  static const char *const qemu_fields[] = {
+      "image", "cpus", "mem_limit", "memory", NULL};
+  static const char *const partial_fields[] = {
+      "ports", "depends_on", NULL};
+  if (g_str_equal(field, "x-quocker")) {
+    return "quocker-extension (supported subset)";
+  }
+  if (g_str_equal(field, "profiles")) {
+    return "selection-only";
+  }
+  if (g_str_equal(field, "network_mode")) {
+    return g_strcmp0(node_string(map_get(service, "network_mode")), "none") ==
+                   0
+               ? "QEMU-mapped (none)"
+               : "unsupported";
+  }
+  if (string_in_list(field, qemu_fields)) {
+    return g_str_equal(field, "image") ? "VM image source"
+                                        : "QEMU setting";
+  }
+  if (string_in_list(field, partial_fields)) {
+    return "partially supported; see Quocker field documentation";
+  }
+  if (g_str_equal(field, "platform")) {
+    return local_image ? "unsupported for local disk services"
+                       : "partially supported OCI platform selection";
+  }
+  if (string_in_list(field, oci_guest_fields)) {
+    return local_image ? "unsupported for local disk services"
+                       : "OCI guest workload setting";
+  }
+  if (string_in_list(field, unsupported_service_fields)) {
+    return "unsupported";
+  }
+  return "preserved-only; no runtime behavior implemented";
+}
+
+static gboolean config_write_capabilities(const YNode *config,
+                                          const char *root) {
+  GPtrArray *rows = g_ptr_array_new_with_free_func(g_free);
+  YNode *services = map_get(config, "services");
+  for (guint i = 0; services && i < services->items->len; i++) {
+    YPair *service_pair = g_ptr_array_index(services->items, i);
+    const char *name = node_string(service_pair->key);
+    if (!name || service_pair->value->kind != NODE_MAPPING) {
+      continue;
+    }
+    gboolean local_image = service_image_is_local(service_pair->value, root);
+    for (guint j = 0; j < service_pair->value->items->len; j++) {
+      YPair *field_pair = g_ptr_array_index(service_pair->value->items, j);
+      const char *field = node_string(field_pair->key);
+      if (field) {
+        g_ptr_array_add(
+            rows, g_strdup_printf("%s\t%s\t%s", name, field,
+                                  service_field_capability(
+                                      field, local_image, service_pair->value)));
+      }
+    }
+  }
+  g_ptr_array_sort(rows, compare_string_pointers);
+  g_print("SERVICE\tFIELD\tSTATUS\n");
+  for (guint i = 0; i < rows->len; i++) {
+    g_print("%s\n", (char *)g_ptr_array_index(rows, i));
+  }
+  g_ptr_array_free(rows, TRUE);
+  return TRUE;
 }
 
 static gboolean config_write_list(const YNode *config, const char *mode) {
@@ -3329,35 +3423,7 @@ static gboolean unsupported_service_settings(YNode *service, const char *name,
   if (!validate_service_network_mode(service, name)) {
     return TRUE;
   }
-  static const char *unsupported[] = {
-      "build",
-      "command",
-      "entrypoint",
-      "environment",
-      "env_file",
-      "volumes",
-      "networks",
-      "healthcheck",
-      "secrets",
-      "configs",
-      "container_name",
-      "hostname",
-      "user",
-      "working_dir",
-      "privileged",
-      "cap_add",
-      "cap_drop",
-      "devices",
-      "tmpfs",
-      "expose",
-      "read_only",
-      "stdin_open",
-      "tty",
-      "restart",
-      "develop",
-      NULL,
-  };
-  for (const char **key = unsupported; *key; key++) {
+  for (const char *const *key = unsupported_service_fields; *key; key++) {
     if (oci_guest &&
       (g_str_equal(*key, "command") || g_str_equal(*key, "entrypoint") ||
          g_str_equal(*key, "environment") || g_str_equal(*key, "user") ||
@@ -6308,6 +6374,7 @@ static void usage(FILE *file) {
           "  config --format yaml|json   Select config output format\n"
           "  config --services|--profiles|--images  List config entries\n"
           "  config --volumes|--networks   List declared resources\n"
+          "  config --capabilities       Report service-field support\n"
           "  config --environment        Print interpolation environment\n"
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
@@ -6459,7 +6526,8 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
                 g_str_equal(arg, "--profiles") ||
                 g_str_equal(arg, "--images") ||
                 g_str_equal(arg, "--volumes") ||
-                g_str_equal(arg, "--networks"))) {
+                g_str_equal(arg, "--networks") ||
+                g_str_equal(arg, "--capabilities"))) {
       const char *mode = arg + 2;
       if (opts->config_list_mode &&
           !g_str_equal(opts->config_list_mode, mode)) {
@@ -7090,6 +7158,8 @@ int main(int argc, char **argv) {
          (opts.config_list_mode
               ? (g_str_equal(opts.config_list_mode, "environment")
                      ? config_write_environment(project_environment)
+                 : g_str_equal(opts.config_list_mode, "capabilities")
+                     ? config_write_capabilities(config, root)
                      : config_write_list(config, opts.config_list_mode))
               : (g_strcmp0(opts.config_format, "json") == 0
                      ? json_write_stdout(config)

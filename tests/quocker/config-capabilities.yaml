@@ -1,0 +1,15 @@
+services:
+  local:
+    image: ./disk.qcow2
+    mem_limit: 1024M
+    ports:
+      - "8080:80"
+    hostname: local-vm
+    labels:
+      app: web
+  guest:
+    image: alpine
+    command: ["serve"]
+    working_dir: /srv/app
+    healthcheck:
+      test: ["CMD", "true"]

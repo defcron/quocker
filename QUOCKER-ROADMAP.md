@@ -88,7 +88,7 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 62 focused tests; its latest run reported 40
+  Meson suite currently has 63 focused tests; its latest run reported 41
   passes, 22 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
@@ -115,7 +115,8 @@ has a meaningful VM equivalent.
   used by the pinned schema and refuses to run if the snapshot introduces an
   unimplemented standard assertion keyword. Validation errors include source
   file, line, and column, with regressions for top-level, nested, merged, and
-  included-file errors.
+  included-file errors. `config --capabilities` reports the runtime status of
+  service fields present in the merged configuration.
   Phase 3 now orders
   selected services after their `depends_on` dependencies and offers
   `up --dry-run`; optional dependencies marked `required: false` warn and skip
@@ -349,8 +350,12 @@ in user-facing compatibility promises.
    schema validates top-level resources and service attributes, including
    nested fields and `x-` extensions. Errors include an instance path and the
    source YAML file, line, and column, preserved through file merges and
-   Compose includes. Capability classification, strict versus permissive
-   handling, and unsupported-field reporting remain.
+   Compose includes. `config --capabilities` now labels each service field
+   present in the configuration as QEMU-mapped, partially supported,
+   OCI-workload-only, unsupported, Quocker-specific, selection-only, or
+   preserved-only. Classification inside nested values, source-aware
+   reporting for other schema diagnostics, strict versus permissive handling,
+   and broader unsupported-resource reporting remain.
 8. **Partially implemented:** profiles and project-name resolution work for
    service selection and interpolation. `config` emits YAML or JSON, lists
    sorted services, profiles, images, volumes, or networks, and prints the

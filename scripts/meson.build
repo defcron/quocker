@@ -81,6 +81,13 @@ if not get_option('quocker').disabled()
                 files('../tests/quocker/schema-location-include.yaml'),
                 'schema-location-included.yaml:3:5: Compose schema: $/services/app:'],
          suite: ['quocker'])
+    quocker_config_capabilities_test = executable(
+      'quocker-config-capabilities-test',
+      files('../tests/quocker/config-capabilities-test.c'),
+      dependencies: [glib])
+    test('quocker-config-capabilities', quocker_config_capabilities_test,
+         args: [quocker, files('../tests/quocker/config-capabilities.yaml')],
+         suite: ['quocker'])
     quocker_guest_status_test = executable(
       'quocker-guest-status-test',
       [files('../tests/quocker/guest-status-test.c'),

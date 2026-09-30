@@ -54,6 +54,13 @@ comments, double-quoted escapes, and unset entries; shell variables take
 precedence and later env files override earlier ones. ``COMPOSE_ENV_FILES``
 selects default env files, and ``COMPOSE_DISABLE_ENV_FILE`` disables implicit
 ``.env`` loading.
+``quocker config --capabilities`` prints a tab-separated report of service
+fields present in the merged configuration. It distinguishes QEMU settings,
+partially supported Compose fields, OCI guest workload settings, unsupported
+settings, and fields that are preserved without runtime behavior. OCI workload
+settings such as ``command`` and ``volumes`` do not apply to local disk
+services; partial support details are listed below and in each resource's
+runtime diagnostics.
 Quocker also reads ``COMPOSE_FILE``, ``COMPOSE_PATH_SEPARATOR``,
 ``COMPOSE_PROJECT_NAME`` and ``COMPOSE_PROFILES``. The file format is intended
 to be a broad Compose-compatible superset, but the QEMU runtime does not
