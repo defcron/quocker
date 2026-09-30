@@ -5827,16 +5827,14 @@ static gboolean guest_exit_status_read(const char *directory, const char *name,
   close(fd);
   contents[length] = '\0';
   GError *error = NULL;
-  gboolean ok = quocker_guest_status_parse_exit(contents, length, status_out,
-                                                &error);
-  gboolean has_status = !error || error->code != 1;
-  if (!ok) {
-    if (allow_missing_log && !has_status) {
-      ok = TRUE;
-    } else {
-      fail("service '%s': %s", name,
-           error ? error->message : "invalid guest completion status");
-    }
+  gboolean has_status = FALSE;
+  gboolean ok = quocker_guest_status_parse_wait_code(
+      contents, length, status_out, &has_status, &error);
+  if (!ok || (!allow_missing_log && !has_status)) {
+    fail("service '%s': %s", name,
+         error ? error->message
+               : "no Quocker guest completion status was recorded");
+    ok = FALSE;
   }
   if (ok && found_status && has_status) {
     *found_status = TRUE;

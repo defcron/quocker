@@ -613,9 +613,9 @@ The VM lifecycle commands are ``start``, ``stop``, ``restart``, ``kill``,
 ``pause``, and ``unpause``. ``quocker wait [SERVICE...]`` blocks until the
 selected saved QEMU processes stop and checks their recorded process identity.
 It requires saved state for each selected service. When an OCI guest reports
-normal workload completion, ``wait`` prints ``SERVICE: exit code N``. Local
-bootable disks and guests that stop before reporting completion have no
-workload exit code to print.
+workload completion, ``wait`` prints ``SERVICE: exit code N``. Signal
+termination is reported as ``128 + signal``. Local bootable disks and guests
+that stop before reporting completion have no workload exit code to print.
 ``start`` starts a previously created VM from its saved state and disk;
 ``up`` is required to create the VM the first time. ``stop``, ``restart``, and
 ``down`` request graceful QEMU termination, wait ten seconds by default, then

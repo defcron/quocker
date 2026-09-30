@@ -13,5 +13,9 @@
 gboolean quocker_guest_status_has_ready(const char *contents, gsize length);
 gboolean quocker_guest_status_parse_exit(const char *contents, gsize length,
                                          int *status_out, GError **error);
+gboolean quocker_guest_status_parse_wait_code(const char *contents,
+                                              gsize length, int *code_out,
+                                              gboolean *found_out,
+                                              GError **error);
 
 #endif

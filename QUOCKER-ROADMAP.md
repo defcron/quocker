@@ -133,7 +133,8 @@ has a meaningful VM equivalent.
   after its QEMU process is abruptly killed while state remains on disk. The
   `wait` command blocks until selected saved VM processes stop, revalidates PID
   identity, and prints the guest workload exit code when an OCI guest reported
-  one; local bootable disks and abrupt guest exits may have no workload code.
+  one (signal termination maps to `128 + signal`); local bootable disks and
+  abrupt guest exits may have no workload code.
   `service_completed_successfully` waits for the dependency VM to exit and
   starts dependents only after guest-reported status zero. `up --wait` waits
   for OCI workload exec readiness and accepts `--wait-timeout`; local bootable
@@ -410,8 +411,9 @@ in user-facing compatibility promises.
    service prefixes, and `--follow` streams complete lines with consistent
    formatting. `wait` blocks until selected VM processes stop and checks the
    recorded process identity. It prints OCI guest workload exit codes when the
-   guest completion marker is present; local bootable disks and abrupt guest
-   exits may not provide a workload exit code.
+   guest completion marker is present and maps signal termination to
+   `128 + signal`; local bootable disks and abrupt guest exits may not provide
+   a workload exit code.
    `up --wait` waits for OCI workload exec readiness and accepts
    `--wait-timeout`; local bootable disks can only be checked for a live QEMU
    process. `stop`, `restart`, and `down` accept `-t`/`--timeout SECONDS`;

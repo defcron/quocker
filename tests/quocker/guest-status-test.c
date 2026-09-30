@@ -58,11 +58,45 @@ static void test_exit_status_parsing(void) {
   g_clear_error(&error);
 }
 
+static void test_wait_code_parsing(void) {
+  GError *error = NULL;
+  int code = -1;
+  gboolean found = FALSE;
+  const char *normal = "QUOCKER_EXIT status=23\n";
+  g_assert_true(quocker_guest_status_parse_wait_code(
+      normal, strlen(normal), &code, &found, &error));
+  g_assert_no_error(error);
+  g_assert_true(found);
+  g_assert_cmpint(code, ==, 23);
+
+  const char *signaled = "QUOCKER_EXIT signal=9\n";
+  g_assert_true(quocker_guest_status_parse_wait_code(
+      signaled, strlen(signaled), &code, &found, &error));
+  g_assert_no_error(error);
+  g_assert_true(found);
+  g_assert_cmpint(code, ==, 137);
+
+  const char *invalid_signal = "QUOCKER_EXIT signal=0\n";
+  g_assert_false(quocker_guest_status_parse_wait_code(
+      invalid_signal, strlen(invalid_signal), &code, &found, &error));
+  g_assert_error(error, g_quark_from_static_string("quocker-guest-status-error"),
+                 4);
+  g_clear_error(&error);
+
+  g_assert_true(
+      quocker_guest_status_parse_wait_code("booting\n", 8, &code, &found,
+                                           &error));
+  g_assert_no_error(error);
+  g_assert_false(found);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/quocker/guest-status/ready",
                   test_ready_marker_requires_protocol_line);
   g_test_add_func("/quocker/guest-status/exit",
                   test_exit_status_parsing);
+  g_test_add_func("/quocker/guest-status/wait-code",
+                  test_wait_code_parsing);
   return g_test_run();
 }
