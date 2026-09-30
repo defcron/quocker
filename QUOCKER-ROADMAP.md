@@ -607,8 +607,11 @@ in user-facing compatibility promises.
 6. Add security and failure tests for malicious YAML, unsafe paths, port
    conflicts, interrupted launches, stale state, exhausted disk, and failed
    QEMU/qemu-img operations.
-7. Add CI for formatting, static analysis, schema drift, tests, docs builds,
-   QEMU build configurations, and the supported distribution matrix.
+7. **Partially implemented:** a fork-only GitLab CI job configures Quocker on
+   Ubuntu 24.04 with x86_64 system emulation, builds QEMU and Quocker with
+   documentation enabled, and runs the Quocker test suite. Formatting, static
+   analysis, schema-drift checks, KVM/TCG coverage, and a broader distribution
+   and architecture matrix remain.
 
 ### Phase 10 — Documentation, packaging, and stable-QEMU maintenance
 

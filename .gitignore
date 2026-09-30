@@ -1,6 +1,7 @@
 /GNUmakefile
 /build/
 /build-quocker/
+/build-quocker-ci/
 /.cache/
 /.vscode/
 *.pyc
