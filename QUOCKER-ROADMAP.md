@@ -120,7 +120,9 @@ has a meaningful VM equivalent.
   per-project lifecycle lock serializes state-changing commands and volume
   removal checks across local Quocker processes. A fake
   QEMU integration test covers stop, start, and down. Guest readiness,
-  crash recovery, and most command compatibility remain open. New state files
+  crash recovery, and most command compatibility remain open. `version` now
+  reports the Quocker interface and QEMU base versions, with a short form and
+  the existing `--version` alias covered by a CLI test. New state files
   record Linux process start-time ticks; stop/status compare the recorded value
   before signaling or reporting a VM process, with a regression proving a
   mismatched/recycled PID is left untouched. New VM state is written to a
@@ -278,8 +280,10 @@ in user-facing compatibility promises.
    QEMU build fail when Quocker dependencies are unavailable unless enabled.
 4. Define public CLI/API boundaries between the Compose frontend and QEMU
    process management. Keep configuration parsing separate from side effects.
-5. Add version reporting, structured diagnostics, logging levels, exit-code
-   conventions, shell completions, and man-page generation.
+5. **Partially implemented:** `quocker version`, `version --short`, and the
+   `--version` alias report the Quocker interface version and build's QEMU base
+   version. Structured diagnostics, logging levels, full exit-code
+   conventions, shell completions, and man-page generation remain.
 6. Add licensing, contribution, code ownership, and security-review notes for
    the new files.
 

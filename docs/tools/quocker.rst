@@ -72,6 +72,10 @@ These output selection modes cannot be combined with ``--format``; without an
 output selection option, ``config`` renders YAML by default or JSON with
 ``--format json``.
 
+``quocker version`` prints the Quocker interface version and the QEMU base
+version used to build it. ``quocker version --short`` prints only the Quocker
+version; ``quocker --version`` remains an alias for the full output.
+
 .. code-block:: yaml
 
    name: dev-stack

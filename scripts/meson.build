@@ -44,12 +44,20 @@ if not get_option('quocker').disabled()
                                        quocker_json, quocker_archive,
                                        quocker_crypto, quocker_ext2fs],
                          c_args: [
+                           '-DQUOCKER_QEMU_BASE_VERSION="' +
+                             meson.project_version() + '"',
                            '-DQUOCKER_SCHEMA_BUILD_PATH="' + quocker_schema_build_path + '"',
                            '-DQUOCKER_SCHEMA_INSTALL_PATH="' + quocker_schema_install_path + '"',
                          ],
                          install: true)
 
     test('quocker-help', quocker, args: ['--help'], suite: ['quocker'])
+    quocker_version_test = executable(
+      'quocker-version-test', files('../tests/quocker/version-test.c'),
+      dependencies: [glib])
+    test('quocker-version', quocker_version_test,
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     test('quocker-config-valid', quocker,
          args: ['-f', files('../tests/quocker/valid.yaml'), 'config', '--quiet'],
          suite: ['quocker'])

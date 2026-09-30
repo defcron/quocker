@@ -38,6 +38,10 @@
 #include <unistd.h>
 #include <yaml.h>
 
+#ifndef QUOCKER_QEMU_BASE_VERSION
+#define QUOCKER_QEMU_BASE_VERSION "unknown"
+#endif
+
 typedef enum NodeKind {
   NODE_SCALAR,
   NODE_SEQUENCE,
@@ -76,6 +80,7 @@ typedef struct Options {
   gboolean remove_volumes;
   gboolean follow;
   gboolean quiet;
+  gboolean short_version;
   GPtrArray *services;
 } Options;
 
@@ -5872,7 +5877,7 @@ static void usage(FILE *file) {
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
           "rm, ps, logs, volume ls|df|inspect|rm, "
-          "pull, prune, config, port\n"
+          "pull, prune, config, port, version [--short]\n"
           "  kill: -s SIGNAL             Signal to send (default SIGKILL)\n"
           "Kernel tools: quocker kernel select|fetch --platform OS/ARCH "
           "[--rootfs DIR] [--pubkey FILE] [--module-release REL] [--json]\n"
@@ -5985,6 +5990,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       /* Docker Compose's rm --force is accepted as a no-op here. */
     } else if (opts->command && g_str_equal(arg, "--quiet")) {
       opts->quiet = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "version") &&
+               g_str_equal(arg, "--short")) {
+      opts->short_version = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "config") &&
                (g_str_equal(arg, "--environment") ||
                 g_str_equal(arg, "--services") ||
@@ -6033,7 +6041,8 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && !g_str_has_prefix(arg, "-")) {
       g_ptr_array_add(opts->services, g_strdup(arg));
     } else if (g_str_equal(arg, "--version") || g_str_equal(arg, "version")) {
-      g_print("quocker 0.1\n");
+      g_print("quocker version 0.1 (QEMU %s)\n",
+              QUOCKER_QEMU_BASE_VERSION);
       exit(0);
     } else {
       fail("unknown option or argument: %s", arg);
@@ -6042,6 +6051,14 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
   }
   if (!opts->command) {
     usage(stderr);
+    return FALSE;
+  }
+  if (g_str_equal(opts->command, "version") &&
+      (opts->services->len || opts->files->len || opts->env_files->len ||
+       opts->project_name || opts->project_directory || opts->port_spec ||
+       opts->quiet || opts->detach || opts->dry_run || opts->remove_volumes ||
+       opts->follow)) {
+    fail("version accepts only the optional --short flag");
     return FALSE;
   }
   if (opts->config_list_mode && opts->config_format) {
@@ -6539,6 +6556,15 @@ int main(int argc, char **argv) {
   Options opts = {0};
   if (!parse_options(argc, argv, &opts)) {
     return 2;
+  }
+  if (g_str_equal(opts.command, "version")) {
+    if (opts.short_version) {
+      g_print("0.1\n");
+    } else {
+      g_print("quocker version 0.1 (QEMU %s)\n",
+              QUOCKER_QEMU_BASE_VERSION);
+    }
+    exit(0);
   }
   if (g_str_equal(opts.command, "prune")) {
     char *cache =
