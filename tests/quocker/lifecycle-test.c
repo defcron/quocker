@@ -239,10 +239,14 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_false(g_file_test(overlay_disk, G_FILE_TEST_EXISTS));
   g_assert_cmpint(g_unlink(base_disk), ==, 0);
   g_assert_cmpint(g_unlink(compose), ==, 0);
+  char *lifecycle_lock =
+      g_build_filename(state_directory, ".lifecycle.lock", NULL);
+  g_assert_cmpint(g_unlink(lifecycle_lock), ==, 0);
   g_assert_cmpint(g_rmdir(state_directory), ==, 0);
   char *quocker_directory = g_build_filename(directory, ".quocker", NULL);
   g_assert_cmpint(g_rmdir(quocker_directory), ==, 0);
   g_assert_cmpint(g_rmdir(directory), ==, 0);
+  g_free(lifecycle_lock);
   g_free(quocker_directory);
   g_free(volume_lock);
   g_free(volume_disk);

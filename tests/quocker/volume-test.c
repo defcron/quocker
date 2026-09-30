@@ -230,12 +230,16 @@ int main(void) {
     char *cli_lock_path = g_build_filename(volume_dir, ".quocker.lock", NULL);
     g_assert_cmpint(g_unlink(cli_lock_path), ==, 0);
     g_assert_cmpint(g_rmdir(volume_dir), ==, 0);
+    char *lifecycle_lock =
+        g_build_filename(quocker_state, ".lifecycle.lock", NULL);
+    g_assert_cmpint(g_unlink(lifecycle_lock), ==, 0);
     g_assert_cmpint(g_rmdir(quocker_state), ==, 0);
     char *metadata_root = g_build_filename(project, ".quocker", NULL);
     g_assert_cmpint(g_rmdir(metadata_root), ==, 0);
     g_assert_cmpint(g_unlink(compose), ==, 0);
     g_assert_cmpint(g_rmdir(project), ==, 0);
     g_free(metadata_root);
+    g_free(lifecycle_lock);
     g_free(volume_dir);
     g_free(cli_lock_path);
     g_free(metadata);

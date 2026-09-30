@@ -23,6 +23,7 @@ GTAGS
 *.gcov
 
 # Quocker binaries and Meson intermediates land under scripts/ in this build.
+.quocker/
 /scripts/quocker
 /scripts/quocker-*-test
 /scripts/quocker-fake-qemu

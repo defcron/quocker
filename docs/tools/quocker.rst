@@ -333,6 +333,9 @@ QEMU termination, waits up to ten seconds, then force-kills QEMU if necessary,
 while preserving the VM state and disk. ``restart`` stops selected services
 in reverse dependency order and starts them in dependency order. ``kill`` sends
 ``SIGKILL`` by default; ``-s``/``--signal`` accepts a signal name or number.
+State-changing lifecycle commands and volume removal serialize on a
+per-project lock, so separate local Quocker processes cannot update the same
+saved VM state simultaneously.
 ``pause`` and ``unpause`` use a private QMP socket to stop and resume guest
 execution without suspending the host QEMU process.
 These commands accept service names and ``--dry-run``. They manage QEMU

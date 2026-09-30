@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/time.h>
@@ -2221,6 +2222,62 @@ static gboolean valid_service_name(const char *name) {
 
 static char *service_dir(const char *root, const char *project) {
   return g_build_filename(root, ".quocker", project, NULL);
+}
+
+static int project_operation_lock(const char *directory) {
+  char *parent = g_path_get_dirname(directory);
+  struct stat parent_stat;
+  struct stat directory_stat;
+  if (g_lstat(parent, &parent_stat) < 0 || !S_ISDIR(parent_stat.st_mode) ||
+      S_ISLNK(parent_stat.st_mode) || parent_stat.st_uid != geteuid() ||
+      (parent_stat.st_mode & 0077) ||
+      g_lstat(directory, &directory_stat) < 0 ||
+      !S_ISDIR(directory_stat.st_mode) || S_ISLNK(directory_stat.st_mode) ||
+      directory_stat.st_uid != geteuid() || (directory_stat.st_mode & 0077)) {
+    fail("project state directory is unsafe");
+    g_free(parent);
+    return -1;
+  }
+  g_free(parent);
+  char *path = g_build_filename(directory, ".lifecycle.lock", NULL);
+  int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+  g_free(path);
+  if (fd < 0) {
+    fail("could not open project lifecycle lock: %s", g_strerror(errno));
+    return -1;
+  }
+  struct stat lock_stat;
+  if (fstat(fd, &lock_stat) < 0 || !S_ISREG(lock_stat.st_mode) ||
+      lock_stat.st_uid != geteuid() || (lock_stat.st_mode & 0077)) {
+    fail("project lifecycle lock is unsafe");
+    close(fd);
+    return -1;
+  }
+  while (flock(fd, LOCK_EX) < 0) {
+    if (errno == EINTR) {
+      continue;
+    }
+    fail("could not lock project lifecycle state: %s", g_strerror(errno));
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+static gboolean command_mutates_project(const Options *opts) {
+  if (g_str_equal(opts->command, "up") ||
+      g_str_equal(opts->command, "start") ||
+      g_str_equal(opts->command, "stop") ||
+      g_str_equal(opts->command, "restart") ||
+      g_str_equal(opts->command, "kill") ||
+      g_str_equal(opts->command, "pause") ||
+      g_str_equal(opts->command, "unpause") ||
+      g_str_equal(opts->command, "down") ||
+      g_str_equal(opts->command, "rm")) {
+    return TRUE;
+  }
+  return g_str_equal(opts->command, "volume") && opts->services->len == 2 &&
+         g_str_equal(g_ptr_array_index(opts->services, 0), "rm");
 }
 
 static char *state_path(const char *directory, const char *service) {
@@ -6244,12 +6301,23 @@ int main(int argc, char **argv) {
     return 1;
   }
   char *directory = service_dir(root, project_lower);
-  if (!g_str_equal(opts.command, "config") &&
-      !g_str_equal(opts.command, "port") &&
-      !g_str_equal(opts.command, "volume") && !opts.dry_run) {
+  gboolean lifecycle_operation = command_mutates_project(&opts);
+  gboolean create_state_directory =
+      (!g_str_equal(opts.command, "config") &&
+       !g_str_equal(opts.command, "port") &&
+       !g_str_equal(opts.command, "volume")) ||
+      lifecycle_operation;
+  if (create_state_directory && !opts.dry_run) {
     if (g_mkdir_with_parents(directory, 0700) < 0) {
       fail("cannot create state directory %s: %s", directory,
            g_strerror(errno));
+      return 1;
+    }
+  }
+  int lifecycle_lock_fd = -1;
+  if (lifecycle_operation && !opts.dry_run) {
+    lifecycle_lock_fd = project_operation_lock(directory);
+    if (lifecycle_lock_fd < 0) {
       return 1;
     }
   }
@@ -6335,6 +6403,10 @@ int main(int argc, char **argv) {
   } else {
     fail("unsupported command '%s'", opts.command);
     usage(stderr);
+  }
+  if (lifecycle_lock_fd >= 0) {
+    flock(lifecycle_lock_fd, LOCK_UN);
+    close(lifecycle_lock_fd);
   }
   node_free(config);
   g_ptr_array_free(files, TRUE);

@@ -116,7 +116,9 @@ has a meaningful VM equivalent.
   selected services after their `depends_on` dependencies and offers
   `up --dry-run`. VM lifecycle `start`, `stop`, `restart`, and `kill` commands
   now use saved QEMU process/disk state; stop preserves VM state, restart
-  follows dependency ordering, and kill accepts named/numeric signals. A fake
+  follows dependency ordering, and kill accepts named/numeric signals. A
+  per-project lifecycle lock serializes state-changing commands and volume
+  removal checks across local Quocker processes. A fake
   QEMU integration test covers stop, start, and down. Guest readiness,
   crash recovery, and most command compatibility remain open. New state files
   record Linux process start-time ticks; stop/status compare the recorded value
@@ -469,10 +471,11 @@ in user-facing compatibility promises.
 3. **Partially implemented:** volumes are created on demand with logical-name
    metadata, listed and inspected per project, and removed with ``down
    --volumes`` or ``quocker volume rm``. Removal has a dry-run preview and
-   refuses while a project service has a live or unverified PID. A project
-   lock now serializes disk creation/removal and quota checks across Quocker
-   processes. Richer ownership records, crash recovery, and serialization of
-   the wider VM lifecycle remain to be implemented.
+   refuses while a project service has a live or unverified PID. A volume lock
+   serializes disk creation/removal and quota checks; a project lifecycle lock
+   protects VM state transitions and live-VM checks across local Quocker
+   processes. Richer ownership records, crash recovery, and cross-host
+   coordination remain to be implemented.
 4. **Partially implemented:** project-scoped volume disk quotas default to
    20 GiB and are configurable with ``QUOCKER_VOLUME_QUOTA``; ``volume ls``
    and ``volume df`` report virtual capacity and actual filesystem allocation.
@@ -480,8 +483,10 @@ in user-facing compatibility promises.
    exceed the quota.
    Global cache quotas, per-image accounting, retention policies, and garbage
    collection remain to be implemented.
-5. Handle backing-chain compaction, snapshots, consistency, concurrent access,
-   locks, crash recovery, image migration, and safe deletion.
+5. **Partially implemented:** project-local locks serialize volume mutations
+   and CLI VM lifecycle commands. Handle backing-chain compaction, snapshots,
+   storage consistency, crash recovery, image migration, cross-host coordination,
+   and safe deletion.
 6. Define encryption-at-rest and secret handling for base disks, overlays,
    volume content, and provisioning data.
 
