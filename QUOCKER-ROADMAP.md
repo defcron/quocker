@@ -119,7 +119,10 @@ has a meaningful VM equivalent.
   included-file errors. `config --capabilities` reports the runtime status of
   service fields present in the merged configuration. Service-level
   `x-quocker` version 1 now validates allowed fields and value types at config
-  load time, with explicit unknown-field/version rejection.
+  load time, with explicit unknown-field/version rejection. A differential
+  check against Docker Compose 5.5.1 covers escaped dollars and set, unset,
+  and empty values with `:-`; Quocker retains `$$` in rendered config while
+  retaining the single-dollar runtime value.
   Phase 3 now orders
   selected services after their `depends_on` dependencies and offers
   `up --dry-run`; optional dependencies marked `required: false` warn and skip
@@ -317,8 +320,9 @@ in user-facing compatibility promises.
 1. **Partially implemented:** merged documents are validated against the pinned
    Compose schema. The C validator handles every assertion keyword used by the
    snapshot and fails closed if the schema adds a recognized but unsupported
-   JSON Schema assertion. YAML scalar resolution and merge behavior still need
-   compatibility fixtures against Docker Compose.
+   JSON Schema assertion. Targeted scalar interpolation cases are compared
+   against Docker Compose; YAML scalar resolution and broader merge behavior
+   still need compatibility fixtures.
 2. **Partially implemented:** canonical file discovery, `-f`, `COMPOSE_FILE`,
    path separators, standard input, and `--project-directory` are supported.
    Project names now follow Compose precedence, normalize config/env/directory
@@ -326,10 +330,13 @@ in user-facing compatibility promises.
    exposed as `COMPOSE_PROJECT_NAME` before per-file interpolation. Include
    file paths are relative to their declaring file; included service path
    scopes and full project naming fixtures remain.
-3. Implement `.env`, repeated `--env-file`, environment precedence, quoting,
-   comments, unset variables, and the full Compose interpolation grammar,
-   including nested defaults, required forms, `$$`, and interpolation only
-   where the specification requires it.
+3. **Partially implemented:** `.env`, repeated `--env-file`, environment
+   precedence, quoting, comments, unset variables, nested defaults, required
+   forms, `$$`, and interpolation only where the specification requires it are
+   supported. Targeted comparison covers set, unset, and empty values with
+   `:-`, and config rendering preserves escaped dollars while runtime values
+   contain a literal dollar. Exhaustive compatibility fixtures and remaining
+   env-file edge cases are open.
 4. Keep project interpolation distinct from per-service `environment` and
    `env_file` processing. Resolve all relative paths using the correct base
    file/project rules.

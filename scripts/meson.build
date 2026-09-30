@@ -134,7 +134,9 @@ if not get_option('quocker').disabled()
       dependencies: [glib, quocker_json])
     test('quocker-config-json', quocker_config_json_test,
          args: [files('../tests/quocker/config-json.yaml')],
-         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         env: ['QUOCKER_CLI=' + quocker.full_path(),
+               'QUOCKER_CONFIG_INTERPOLATION_SET=present',
+               'QUOCKER_CONFIG_INTERPOLATION_EMPTY='], depends: [quocker],
          suite: ['quocker'])
     quocker_config_output_test = executable(
       'quocker-config-output-test',

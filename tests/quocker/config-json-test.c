@@ -5,6 +5,7 @@ int main(int argc, char **argv) {
   g_assert_cmpint(argc, ==, 2);
   const char *cli = g_getenv("QUOCKER_CLI");
   g_assert_nonnull(cli);
+  g_unsetenv("QUOCKER_CONFIG_INTERPOLATION_MISSING");
   char *arguments[] = {(char *)cli, (char *)"-f", argv[1], (char *)"config",
                        (char *)"--format", (char *)"json", NULL};
   gchar *output = NULL;
@@ -32,6 +33,18 @@ int main(int argc, char **argv) {
   g_assert_cmpstr(json_object_get_string_member(app, "mem_limit"), ==, "1G");
   JsonArray *command = json_object_get_array_member(app, "command");
   g_assert_cmpstr(json_array_get_string_element(command, 1), ==, "true");
+  g_assert_cmpstr(json_array_get_string_element(command, 2), ==,
+                  "$${LITERAL}");
+  JsonObject *environment = json_object_get_object_member(app, "environment");
+  g_assert_cmpstr(json_object_get_string_member(environment,
+                                                "QUOCKER_DEFAULT_SET"),
+                  ==, "present");
+  g_assert_cmpstr(json_object_get_string_member(
+                      environment, "QUOCKER_DEFAULT_MISSING"),
+                  ==, "fallback");
+  g_assert_cmpstr(json_object_get_string_member(environment,
+                                                "QUOCKER_DEFAULT_EMPTY"),
+                  ==, "fallback");
 
   g_object_unref(parser);
   g_free(stderr_text);

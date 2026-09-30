@@ -263,7 +263,8 @@ inputs support unquoted/double-quoted interpolation, literal single quotes,
 comments, double-quoted escapes, and unset entries; shell variables take
 precedence and later env files override earlier ones. ``COMPOSE_ENV_FILES``
 selects default env files, and ``COMPOSE_DISABLE_ENV_FILE`` disables implicit
-``.env`` loading.
+``.env`` loading. Rendered ``config`` output retains ``$$`` escapes as Compose
+does, while the guest runtime receives the corresponding literal ``$``.
 ``quocker config --capabilities`` prints a tab-separated report of service
 fields present in the merged configuration. It distinguishes QEMU settings,
 partially supported Compose fields, OCI guest workload settings, unsupported

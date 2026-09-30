@@ -8,3 +8,8 @@ services:
     command:
       - echo
       - "true"
+      - "$${LITERAL}"
+    environment:
+      QUOCKER_DEFAULT_SET: ${QUOCKER_CONFIG_INTERPOLATION_SET:-fallback}
+      QUOCKER_DEFAULT_MISSING: ${QUOCKER_CONFIG_INTERPOLATION_MISSING:-fallback}
+      QUOCKER_DEFAULT_EMPTY: ${QUOCKER_CONFIG_INTERPOLATION_EMPTY:-fallback}

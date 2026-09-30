@@ -63,6 +63,7 @@ struct YNode {
   NodeKind kind;
   char *tag;
   char *scalar;
+  char *compose_scalar;
   char *source_file;
   guint source_line;
   guint source_column;
@@ -205,6 +206,7 @@ static void node_free(YNode *node) {
   }
   g_free(node->tag);
   g_free(node->scalar);
+  g_free(node->compose_scalar);
   g_free(node->source_file);
   g_free(node);
 }
@@ -219,6 +221,7 @@ static YNode *node_clone(const YNode *src) {
   dst->source_column = src->source_column;
   if (src->kind == NODE_SCALAR) {
     dst->scalar = g_strdup(src->scalar);
+    dst->compose_scalar = g_strdup(src->compose_scalar);
     dst->scalar_style = src->scalar_style;
   } else if (src->kind == NODE_SEQUENCE) {
     for (guint i = 0; i < src->items->len; i++) {
@@ -512,19 +515,26 @@ static const char *interpolation_end(const char *text) {
 }
 
 static char *interpolate_text_depth(const char *text, GHashTable *environment,
-                                    guint depth) {
+                                    guint depth, char **compose_text_out) {
   if (depth > 64) {
     fail("Compose interpolation exceeded the maximum nesting depth");
     return NULL;
   }
   GString *out = g_string_new(NULL);
+  GString *compose_out = compose_text_out ? g_string_new(NULL) : NULL;
   for (const char *p = text; *p;) {
     if (*p != '$') {
       g_string_append_c(out, *p++);
+      if (compose_out) {
+        g_string_append_c(compose_out, p[-1]);
+      }
       continue;
     }
     if (p[1] == '$') {
       g_string_append_c(out, '$');
+      if (compose_out) {
+        g_string_append(compose_out, "$$");
+      }
       p += 2;
       continue;
     }
@@ -538,6 +548,9 @@ static char *interpolate_text_depth(const char *text, GHashTable *environment,
       name_start = p + 2;
       if (!(g_ascii_isalpha(*name_start) || *name_start == '_')) {
         g_string_append_c(out, *p++);
+        if (compose_out) {
+          g_string_append_c(compose_out, p[-1]);
+        }
         continue;
       }
       name_end = name_start;
@@ -547,6 +560,9 @@ static char *interpolate_text_depth(const char *text, GHashTable *environment,
       end = interpolation_end(name_end);
       if (!end) {
         g_string_append_c(out, *p++);
+        if (compose_out) {
+          g_string_append_c(compose_out, p[-1]);
+        }
         continue;
       }
       if (name_end[0] == ':' && strchr("-?+", name_end[1])) {
@@ -561,6 +577,9 @@ static char *interpolate_text_depth(const char *text, GHashTable *environment,
       name_end = name_start;
       if (!(g_ascii_isalpha(*name_end) || *name_end == '_')) {
         g_string_append_c(out, *p++);
+        if (compose_out) {
+          g_string_append_c(compose_out, p[-1]);
+        }
         continue;
       }
       while (g_ascii_isalnum(*name_end) || *name_end == '_') {
@@ -582,8 +601,8 @@ static char *interpolate_text_depth(const char *text, GHashTable *environment,
         use_operand = TRUE;
       } else if (op == '?' && (colon ? !nonempty : !set)) {
         char *raw_message = g_strndup(operand, end - operand);
-        char *message =
-            interpolate_text_depth(raw_message, environment, depth + 1);
+        char *message = interpolate_text_depth(raw_message, environment,
+                                               depth + 1, NULL);
         if (message) {
           fail("Compose interpolation error: %s", *message ? message : name);
         }
@@ -591,23 +610,43 @@ static char *interpolate_text_depth(const char *text, GHashTable *environment,
         g_free(message);
         g_free(name);
         g_string_free(out, TRUE);
+        if (compose_out) {
+          g_string_free(compose_out, TRUE);
+        }
         return NULL;
       }
       if (use_operand) {
         char *raw_operand = g_strndup(operand, end - operand);
-        char *expanded_operand =
-            interpolate_text_depth(raw_operand, environment, depth + 1);
+        char *expanded_compose_operand = NULL;
+        char *expanded_operand = interpolate_text_depth(
+            raw_operand, environment, depth + 1,
+            compose_out ? &expanded_compose_operand : NULL);
         g_free(raw_operand);
         if (!expanded_operand) {
           g_free(name);
           g_string_free(out, TRUE);
+          if (compose_out) {
+            g_string_free(compose_out, TRUE);
+          }
           return NULL;
         }
         g_string_append(out, expanded_operand);
+        if (compose_out) {
+          g_string_append(compose_out, expanded_compose_operand);
+        }
+        g_free(expanded_compose_operand);
         g_free(expanded_operand);
+      } else if (value) {
+        g_string_append(out, value);
+        if (compose_out) {
+          g_string_append(compose_out, value);
+        }
       }
     } else if (value) {
       g_string_append(out, value);
+      if (compose_out) {
+        g_string_append(compose_out, value);
+      }
     } else {
       g_printerr("quocker: warning: Compose variable '%s' is not set; "
                  "substituting an empty string\n",
@@ -616,22 +655,35 @@ static char *interpolate_text_depth(const char *text, GHashTable *environment,
     p = braced ? end + 1 : end;
     g_free(name);
   }
+  if (compose_text_out) {
+    *compose_text_out = g_string_free(compose_out, FALSE);
+  }
   return g_string_free(out, FALSE);
 }
 
 static char *interpolate_text(const char *text, GHashTable *environment) {
-  return interpolate_text_depth(text, environment, 0);
+  return interpolate_text_depth(text, environment, 0, NULL);
 }
 
 static gboolean interpolate_node(YNode *node, GHashTable *environment) {
   if (node->kind == NODE_SCALAR) {
-    char *expanded =
-        interpolate_text(node->scalar ? node->scalar : "", environment);
+    char *compose_expanded = NULL;
+    char *expanded = interpolate_text_depth(
+        node->scalar ? node->scalar : "", environment, 0,
+        &compose_expanded);
     if (!expanded) {
+      g_free(compose_expanded);
       return FALSE;
     }
     g_free(node->scalar);
     node->scalar = expanded;
+    g_free(node->compose_scalar);
+    if (g_str_equal(node->scalar, compose_expanded)) {
+      g_free(compose_expanded);
+      node->compose_scalar = NULL;
+    } else {
+      node->compose_scalar = compose_expanded;
+    }
     return TRUE;
   }
   if (node->kind == NODE_SEQUENCE) {
@@ -1277,12 +1329,14 @@ static YNode *node_merge(const YNode *base, const YNode *override,
 static gboolean emit_node(yaml_emitter_t *emitter, const YNode *node) {
   yaml_event_t event;
   if (node->kind == NODE_SCALAR) {
+    const char *scalar = node->compose_scalar ? node->compose_scalar
+                                               : node->scalar;
     yaml_scalar_style_t style = YAML_DOUBLE_QUOTED_SCALAR_STYLE;
     gboolean implicit = g_str_equal(node->tag, TAG_STR);
     if (!yaml_scalar_event_initialize(
             &event, NULL, (yaml_char_t *)node->tag,
-            (yaml_char_t *)(node->scalar ? node->scalar : ""),
-            node->scalar ? strlen(node->scalar) : 0, implicit, implicit,
+            (yaml_char_t *)(scalar ? scalar : ""),
+            scalar ? strlen(scalar) : 0, implicit, implicit,
             style)) {
       return FALSE;
     }
@@ -1406,7 +1460,9 @@ static void json_add_yaml_value(JsonBuilder *builder, const YNode *node,
     json_builder_end_object(builder);
     return;
   }
-  const char *text = node->scalar ? node->scalar : "";
+  const char *text = node->compose_scalar
+                         ? node->compose_scalar
+                         : node->scalar ? node->scalar : "";
   if (mapping_key || node->scalar_style != YAML_PLAIN_SCALAR_STYLE) {
     json_builder_add_string_value(builder, text);
     return;
@@ -1796,6 +1852,7 @@ static gboolean absolutize_include_node(YNode *node, const char *base) {
     char *absolute = absolute_path(path, base);
     g_free(node->scalar);
     node->scalar = absolute;
+    g_clear_pointer(&node->compose_scalar, g_free);
     return TRUE;
   }
   if (node->kind == NODE_SEQUENCE) {
@@ -1965,6 +2022,7 @@ static void resolve_included_service_paths(YNode *service,
     char *absolute = absolute_path(image_name, project_directory);
     g_free(image->scalar);
     image->scalar = absolute;
+    g_clear_pointer(&image->compose_scalar, g_free);
   }
   YNode *env_file = map_get(service, "env_file");
   if (env_file) {
