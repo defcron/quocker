@@ -154,8 +154,10 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
      - ``--remove-orphans`` and ``--rmi``. See the
        `Compose down reference <https://docs.docker.com/reference/cli/docker/compose/down/>`_.
    * - ``ps``
-     - Service names; by default lists running saved VMs. ``-a``/``--all``
-       includes stopped VMs with saved state. Output includes VM state, PID,
+     - Service names; by default lists running saved VMs, including saved VMs
+       whose service is no longer declared (orphans). ``-a``/``--all`` includes
+       stopped VMs with saved state. ``--orphans=false`` suppresses orphans.
+       Output includes VM state, PID,
        and disk path; ``-q``/``--quiet`` prints generated VM names, one per
        line; ``--services`` prints matching service names only and cannot be
        combined with quiet output. ``--status running|exited`` and
@@ -163,7 +165,7 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
        ``status=exited`` select VM process states. Other Docker statuses
        (including ``paused``, ``created``, and ``dead``) are rejected because
        Quocker tracks QEMU process state rather than container lifecycle state.
-     - ``--format``, ``--no-trunc``, and ``--orphans``.
+     - ``--format`` and ``--no-trunc``.
        Project selection uses Quocker's
        shared ``-p``/``--project-name`` option. See the
        `Compose ps reference <https://docs.docker.com/reference/cli/docker/compose/ps/>`_.
@@ -565,7 +567,9 @@ stopped saved VMs without requiring ``--all``. The ``running`` and ``exited``
 filters describe whether the recorded QEMU process is alive; other Docker
 container statuses do not map to Quocker's saved VM state and are rejected.
 ``quocker ps --services`` prints the Compose service names for matching saved
-VMs, respecting the running default, ``--all``, and status filters.
+VMs, respecting the running default, ``--all``, status filters, and orphan
+selection. By default, saved VMs whose service is absent from the Compose file
+are included; use ``--orphans=false`` to suppress them.
 ``quocker logs [SERVICE]`` shows serial output;
 ``quocker logs --tail 20`` shows only its last twenty non-empty lines.
 ``quocker logs --no-log-prefix`` omits the service name prefix, and

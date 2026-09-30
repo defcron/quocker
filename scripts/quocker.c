@@ -96,6 +96,7 @@ typedef struct Options {
   gboolean logs_no_prefix;
   gboolean quiet;
   gboolean ps_all;
+  gboolean ps_orphans;
   gboolean ps_services;
   GPtrArray *ps_statuses;
   gboolean short_version;
@@ -6515,6 +6516,60 @@ static gboolean ps_one(const char *name, YNode *service, void *data) {
   return TRUE;
 }
 
+static gint ps_name_compare(gconstpointer left, gconstpointer right) {
+  return g_strcmp0(*(char *const *)left, *(char *const *)right);
+}
+
+static gboolean ps_list_orphans(ListContext *ctx, YNode *services,
+                                gboolean enabled, gboolean selected_services) {
+  if (!enabled || selected_services) {
+    return TRUE;
+  }
+  struct stat directory_stat;
+  if (g_lstat(ctx->directory, &directory_stat) < 0) {
+    if (errno == ENOENT) {
+      return TRUE;
+    }
+    fail("could not inspect saved VM directory: %s", g_strerror(errno));
+    return FALSE;
+  }
+  if (!S_ISDIR(directory_stat.st_mode) ||
+      directory_stat.st_uid != geteuid() ||
+      (directory_stat.st_mode & (S_IWGRP | S_IWOTH))) {
+    fail("saved VM directory is unsafe; refusing to list orphan services");
+    return FALSE;
+  }
+  GError *error = NULL;
+  GDir *directory = g_dir_open(ctx->directory, 0, &error);
+  if (!directory) {
+    fail("could not open saved VM directory: %s",
+         error ? error->message : "unknown error");
+    g_clear_error(&error);
+    return FALSE;
+  }
+  GPtrArray *orphans = g_ptr_array_new_with_free_func(g_free);
+  const char *entry;
+  while ((entry = g_dir_read_name(directory))) {
+    if (!g_str_has_suffix(entry, ".state")) {
+      continue;
+    }
+    char *name = g_strndup(entry, strlen(entry) - strlen(".state"));
+    if (valid_service_name(name) && !map_get(services, name)) {
+      g_ptr_array_add(orphans, name);
+    } else {
+      g_free(name);
+    }
+  }
+  g_dir_close(directory);
+  g_ptr_array_sort(orphans, ps_name_compare);
+  gboolean ok = TRUE;
+  for (guint i = 0; ok && i < orphans->len; i++) {
+    ok = ps_one(g_ptr_array_index(orphans, i), NULL, ctx);
+  }
+  g_ptr_array_free(orphans, TRUE);
+  return ok;
+}
+
 typedef struct ImagesContext {
   const char *project;
   const char *directory;
@@ -6864,6 +6919,7 @@ static void usage(FILE *file) {
           "  up --wait [--wait-timeout SEC] Wait for guest workloads to be ready\n"
           "  stop|restart|down -t, --timeout SEC Graceful stop timeout\n"
           "  ps -a, --all              Include stopped saved VMs\n"
+          "  ps --orphans[=BOOL]       Include undeclared saved VMs (default true)\n"
           "  ps --services             Print service names only\n"
           "  ps --status running|exited Filter saved VM state\n"
           "  ps --filter status=STATE  Filter saved VM state\n"
@@ -6932,6 +6988,7 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
   opts->profiles = g_ptr_array_new_with_free_func(g_free);
   opts->ps_statuses = g_ptr_array_new_with_free_func(g_free);
   opts->services = g_ptr_array_new_with_free_func(g_free);
+  opts->ps_orphans = TRUE;
   opts->signal_number = SIGKILL;
   opts->shutdown_timeout_seconds = 10;
   const char *env_profiles = g_getenv("COMPOSE_PROFILES");
@@ -7096,6 +7153,20 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
                g_str_equal(arg, "--services")) {
       opts->ps_services = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "ps") &&
+               g_str_equal(arg, "--orphans")) {
+      opts->ps_orphans = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "ps") &&
+               g_str_has_prefix(arg, "--orphans=")) {
+      const char *value = arg + strlen("--orphans=");
+      if (g_str_equal(value, "true")) {
+        opts->ps_orphans = TRUE;
+      } else if (g_str_equal(value, "false")) {
+        opts->ps_orphans = FALSE;
+      } else {
+        fail("ps --orphans must be true or false");
+        return FALSE;
+      }
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
                (g_str_equal(arg, "--status") ||
                 g_str_has_prefix(arg, "--status=") ||
@@ -7850,6 +7921,10 @@ int main(int argc, char **argv) {
     ListContext context = {project_lower, directory, opts.quiet, opts.ps_all,
                            opts.ps_services, opts.ps_statuses};
     ok = for_services(services, &opts, ps_one, &context);
+    if (ok) {
+      ok = ps_list_orphans(&context, services, opts.ps_orphans,
+                           opts.services->len > 0);
+    }
   } else if (g_str_equal(opts.command, "images")) {
     g_print("SERVICE\tIMAGE\tVM_STATE\n");
     ImagesContext context = {project_lower, directory};
