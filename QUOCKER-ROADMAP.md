@@ -312,8 +312,12 @@ in user-facing compatibility promises.
    Sphinx generates `quocker(1)` when docs are enabled. Structured diagnostics,
    logging levels, full exit-code conventions, and other shell completions
    remain.
-6. Add licensing, contribution, code ownership, and security-review notes for
-   the new files.
+6. **Implemented:** `CONTRIBUTING.md` records the GPL identifier,
+   C-only implementation policy, optional-build guidance, review process, and
+   focused validation commands. `SECURITY.md` documents untrusted input
+   boundaries, review expectations, private vulnerability reporting, and the
+   limits of Quocker's security guarantees. Quocker-specific maintainers are
+   intentionally not inferred from QEMU's upstream `MAINTAINERS` entries.
 
 ### Phase 2 — Implement the Compose configuration model
 
