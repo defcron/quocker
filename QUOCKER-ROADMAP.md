@@ -122,7 +122,9 @@ has a meaningful VM equivalent.
   follows dependency ordering, and kill accepts named/numeric signals. A
   per-project lifecycle lock serializes state-changing commands and volume
   removal checks across local Quocker processes. A fake
-  QEMU integration test covers stop, start, and down. Guest readiness,
+  QEMU integration test covers stop, start, down, and wait. The `wait` command
+  blocks until selected saved VM processes stop and revalidates PID identity;
+  workload exit codes and event-driven waiting remain open. Guest readiness,
   crash recovery, and most command compatibility remain open. `version` now
   reports the Quocker interface and QEMU base versions, with a short form and
   the existing `--version` alias covered by a CLI test. New state files
@@ -359,7 +361,9 @@ in user-facing compatibility promises.
    `wait`, `images`, `ls`, and `version`. `start`, `stop`, `restart`, `kill`,
    `pause`, and `unpause` now have initial saved-VM process handling; pause and
    resume use QMP, and the fake-QEMU integration test exercises these commands.
-   Crash recovery and complete flag compatibility remain unfinished. Implement only after Phase 0 defines
+   `wait` blocks until selected VM processes stop and checks the recorded
+   process identity; guest workload exit codes remain unavailable. Crash
+   recovery and complete flag compatibility remain unfinished. Implement only after Phase 0 defines
    VM semantics; explain commands with no meaningful VM equivalent.
    `port SERVICE PRIVATE_PORT[/PROTOCOL]` reports configured static host
    bindings and queries QMP for dynamically allocated host ports while a VM is

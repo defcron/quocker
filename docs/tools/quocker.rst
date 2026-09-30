@@ -350,7 +350,10 @@ materializes rootfs data and a raw ext4 guest disk in
 ``up`` can boot this guest disk when a compatible signed kernel catalog and
 its kernel/initrd assets are installed.
 The VM lifecycle commands are ``start``, ``stop``, ``restart``, ``kill``,
-``pause``, and ``unpause``.
+``pause``, and ``unpause``. ``quocker wait [SERVICE...]`` blocks until the
+selected saved QEMU processes stop and checks their recorded process identity.
+It requires saved state for each selected service; guest workload exit codes
+are not reported yet.
 ``start`` starts a previously created VM from its saved state and disk;
 ``up`` is required to create the VM the first time. ``stop`` requests graceful
 QEMU termination, waits up to ten seconds, then force-kills QEMU if necessary,
@@ -362,8 +365,8 @@ per-project lock, so separate local Quocker processes cannot update the same
 saved VM state simultaneously.
 ``pause`` and ``unpause`` use a private QMP socket to stop and resume guest
 execution without suspending the host QEMU process.
-These commands accept service names and ``--dry-run``. They manage QEMU
-processes and VM resources; they do not operate a container runtime. On Linux,
+These lifecycle commands accept service names and ``--dry-run``. They manage
+QEMU processes and VM resources; they do not operate a container runtime. On Linux,
 new state records the process start time as well as the PID and QEMU VM name,
 so a stale or recycled PID observed during identity checks is not treated as
 that VM's QEMU process. Signals use Linux pidfds when available, binding the

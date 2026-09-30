@@ -5673,6 +5673,35 @@ static gboolean ps_one(const char *name, YNode *service, void *data) {
   return TRUE;
 }
 
+typedef struct WaitContext {
+  const char *project;
+  const char *directory;
+} WaitContext;
+
+static gboolean wait_one(const char *name, YNode *service, void *data) {
+  (void)service;
+  WaitContext *ctx = data;
+  pid_t pid = read_pid(ctx->directory, name);
+  if (pid <= 1) {
+    fail("service '%s' has no saved VM state to wait for", name);
+    return FALSE;
+  }
+  guint64 start_time = state_process_start_time(ctx->directory, name);
+  while (process_running(pid, ctx->project, name, start_time)) {
+    g_usleep(100000);
+  }
+  guint64 remaining_start_time =
+      pid_exists(pid) ? process_start_time(pid) : 0;
+  if (pid_exists(pid) &&
+      (!start_time || (remaining_start_time &&
+                       remaining_start_time != start_time))) {
+    fail("service '%s': saved PID %d no longer matches this VM", name, pid);
+    return FALSE;
+  }
+  g_print("[%s] %s: stopped\n", ctx->project, name);
+  return TRUE;
+}
+
 typedef struct PortContext {
   const char *requested_port;
   const char *directory;
@@ -5890,7 +5919,7 @@ static void usage(FILE *file) {
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
-          "rm, ps, logs, volume ls|df|inspect|rm, "
+          "rm, ps, logs, wait, volume ls|df|inspect|rm, "
           "pull, prune, config, port, version [--short]\n"
           "  kill: -s SIGNAL             Signal to send (default SIGKILL)\n"
           "Kernel tools: quocker kernel select|fetch --platform OS/ARCH "
@@ -6679,6 +6708,9 @@ int main(int argc, char **argv) {
     g_print("NAME\tSTATE\tPID\tDISK\n");
     ListContext context = {project_lower, directory};
     ok = for_services(services, &opts, ps_one, &context);
+  } else if (g_str_equal(opts.command, "wait")) {
+    WaitContext context = {project_lower, directory};
+    ok = for_services(services, &opts, wait_one, &context);
   } else if (g_str_equal(opts.command, "port")) {
     PortContext context = {opts.port_spec, directory, project_lower};
     ok = for_services(services, &opts, port_one, &context);

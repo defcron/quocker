@@ -207,11 +207,52 @@ static void test_stop_preserves_vm_state(void) {
   output = NULL;
   g_assert_false(run_cli(cli, directory, compose, "stop", &output));
   g_free(output);
+  output = NULL;
+  g_assert_false(run_cli(cli, directory, compose, "wait", &output));
+  g_free(output);
   g_assert_true(g_file_test(qmp_socket, G_FILE_TEST_EXISTS));
   g_assert_true(g_file_set_contents(state_path, started_state, -1, &error));
   g_assert_no_error(error);
   g_strfreev(state_lines);
   g_free(started_state);
+  char *wait_arguments[] = {(char *)cli,
+                            (char *)"--project-directory",
+                            directory,
+                            (char *)"--project-name",
+                            (char *)"lifecycle",
+                            (char *)"-f",
+                            compose,
+                            (char *)"wait",
+                            (char *)"app",
+                            NULL};
+  GPid waiter = 0;
+  g_assert_true(g_spawn_async(NULL, wait_arguments, NULL,
+                              G_SPAWN_DO_NOT_REAP_CHILD, NULL, NULL, &waiter,
+                              &error));
+  g_assert_no_error(error);
+  g_usleep(100000);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "stop", &output));
+  g_free(output);
+  gint waiter_status = 0;
+  pid_t waiter_result = 0;
+  for (guint i = 0; i < 30 && waiter_result == 0; i++) {
+    waiter_result = waitpid(waiter, &waiter_status, WNOHANG);
+    if (waiter_result == 0) {
+      g_usleep(100000);
+    }
+  }
+  if (waiter_result == 0) {
+    kill(waiter, SIGKILL);
+    waitpid(waiter, &waiter_status, 0);
+  }
+  g_assert_cmpint(waiter_result, ==, waiter);
+  g_assert_true(WIFEXITED(waiter_status));
+  g_assert_cmpint(WEXITSTATUS(waiter_status), ==, 0);
+  g_spawn_close_pid(waiter);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "start", &output));
+  g_free(output);
   output = NULL;
   g_assert_true(run_cli(cli, directory, compose, "pause", &output));
   g_assert_nonnull(strstr(output, "app: paused"));

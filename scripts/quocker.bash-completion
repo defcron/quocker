@@ -4,7 +4,7 @@ _quocker() {
     COMPREPLY=()
     cur=${COMP_WORDS[COMP_CWORD]}
     prev=${COMP_WORDS[COMP_CWORD-1]}
-    commands='compose up start stop restart kill pause unpause down rm ps logs volume pull prune config port version kernel'
+    commands='compose up start stop restart kill pause unpause down rm ps logs wait volume pull prune config port version kernel'
     global_options='-h --help -f --file -p --project-name --project-directory --env-file --profile'
 
     command_index=1
@@ -15,7 +15,7 @@ _quocker() {
                 ;;
             compose)
                 (( command_index++ ))
-                commands='up start stop restart kill pause unpause down rm ps logs volume pull prune config port version'
+                commands='up start stop restart kill pause unpause down rm ps logs wait volume pull prune config port version'
                 ;;
             -*)
                 (( command_index++ ))
