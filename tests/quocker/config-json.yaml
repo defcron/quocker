@@ -11,6 +11,8 @@ services:
     build:
       context: ./config-json-build
       dockerfile: Dockerfile
+      additional_contexts:
+        extra: ./config-json-extra
     env_file:
       - config-json-base.env
       - config-json-override.env
@@ -46,3 +48,8 @@ services:
         source: ../long-volume
         target: /long
         read_only: true
+  list-context:
+    build:
+      context: ./config-json-build
+      additional_contexts:
+        - extra=./config-json-extra

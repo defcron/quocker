@@ -1903,16 +1903,8 @@ static gboolean config_build_context_is_local(const char *context) {
   return is_local;
 }
 
-static void config_resolve_service_build_path(YNode *service,
-                                              const char *base,
-                                              gboolean no_path_resolution) {
-  if (no_path_resolution) {
-    return;
-  }
-  YNode *build = map_get(service, "build");
-  YNode *context = build && build->kind == NODE_MAPPING
-                       ? map_get(build, "context")
-                       : build;
+static void config_resolve_additional_context(YNode *context,
+                                             const char *base) {
   const char *value = node_string(context);
   if (!value || g_path_is_absolute(value) ||
       !config_build_context_is_local(value)) {
@@ -1922,6 +1914,75 @@ static void config_resolve_service_build_path(YNode *service,
   g_free(context->scalar);
   context->scalar = absolute;
   g_clear_pointer(&context->compose_scalar, g_free);
+}
+
+static void config_resolve_service_build_path(YNode *service,
+                                              const char *base,
+                                              gboolean no_path_resolution) {
+  YNode *build = map_get(service, "build");
+  if (!build || build->kind != NODE_MAPPING) {
+    if (no_path_resolution) {
+      return;
+    }
+    const char *value = node_string(build);
+    if (value && !g_path_is_absolute(value) &&
+        config_build_context_is_local(value)) {
+      char *absolute = absolute_path(value, base);
+      g_free(build->scalar);
+      build->scalar = absolute;
+      g_clear_pointer(&build->compose_scalar, g_free);
+    }
+    return;
+  }
+  YNode *additional_contexts = map_get(build, "additional_contexts");
+  if (additional_contexts && additional_contexts->kind == NODE_SEQUENCE) {
+    YNode *normalized = node_new(NODE_MAPPING, TAG_MAP);
+    gboolean valid = TRUE;
+    for (guint i = 0; i < additional_contexts->items->len; i++) {
+      YNode *entry = g_ptr_array_index(additional_contexts->items, i);
+      const char *value = node_string(entry);
+      const char *separator = value ? strchr(value, '=') : NULL;
+      if (!separator || separator == value || !separator[1]) {
+        valid = FALSE;
+        break;
+      }
+      char *name = g_strndup(value, separator - value);
+      YNode *source = node_new(NODE_SCALAR, TAG_STR);
+      source->scalar = g_strdup(separator + 1);
+      source->source_file = g_strdup(entry->source_file);
+      source->source_line = entry->source_line;
+      source->source_column = entry->source_column;
+      map_set(normalized, name, source);
+      g_free(name);
+    }
+    if (valid) {
+      map_set(build, "additional_contexts", normalized);
+      additional_contexts = normalized;
+    } else {
+      node_free(normalized);
+    }
+  }
+  if (additional_contexts &&
+      additional_contexts->kind == NODE_MAPPING) {
+    for (guint i = 0; i < additional_contexts->items->len; i++) {
+      YPair *pair = g_ptr_array_index(additional_contexts->items, i);
+      if (!no_path_resolution) {
+        config_resolve_additional_context(pair->value, base);
+      }
+    }
+  }
+  if (no_path_resolution) {
+    return;
+  }
+  YNode *context = map_get(build, "context");
+  const char *value = node_string(context);
+  if (value && !g_path_is_absolute(value) &&
+      config_build_context_is_local(value)) {
+    char *absolute = absolute_path(value, base);
+    g_free(context->scalar);
+    context->scalar = absolute;
+    g_clear_pointer(&context->compose_scalar, g_free);
+  }
 }
 
 static void config_resolve_service_volume_paths(YNode *service,

@@ -309,12 +309,14 @@ paths in normalized absolute-path form.
 ``config --no-interpolate`` retains variable expressions in the rendered model
 and skips service env-file resolution.
 ``config --no-path-resolution`` preserves relative paths for service env files
-that remain in the output, local build contexts, bind sources in short and long
-volume syntax, and top-level config and secret ``file`` values. Local
-image/config/secret paths from included or extended models are also retained.
-Other path-valued Compose fields are not fully normalized yet. Build context
-paths are resolved relative to their declaring Compose project; Dockerfile
-paths retain Compose's context-relative spelling.
+that remain in the output, local build contexts and additional contexts, bind
+sources in short and long volume syntax, and top-level config and secret
+``file`` values. Local image/config/secret paths from included or extended
+models are also retained. Other path-valued Compose fields are not fully
+normalized yet. Build context paths are resolved relative to their declaring
+Compose project; Dockerfile paths retain Compose's context-relative spelling.
+List-form ``additional_contexts`` are normalized to a mapping as in Compose's
+rendered model.
 These output selection modes cannot be combined with ``--format``; without an
 output selection option, ``config`` renders YAML by default or JSON with
 ``--format json``.

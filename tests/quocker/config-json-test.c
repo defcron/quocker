@@ -56,6 +56,22 @@ int main(int argc, char **argv) {
                   expected_build_context);
   g_assert_cmpstr(json_object_get_string_member(build, "dockerfile"), ==,
                   "Dockerfile");
+  JsonObject *list_service =
+      json_object_get_object_member(services, "list-context");
+  JsonObject *list_build =
+      json_object_get_object_member(list_service, "build");
+  JsonObject *additional_contexts =
+      json_object_get_object_member(list_build, "additional_contexts");
+  char *additional_directory = g_path_get_dirname(argv[1]);
+  char *additional_context =
+      g_build_filename(additional_directory, "config-json-extra", NULL);
+  char *expected_additional_context =
+      g_canonicalize_filename(additional_context, NULL);
+  g_assert_cmpstr(json_object_get_string_member(additional_contexts, "extra"),
+                  ==, expected_additional_context);
+  g_free(expected_additional_context);
+  g_free(additional_context);
+  g_free(additional_directory);
   g_free(expected_build_context);
   g_free(build_context);
   g_free(build_directory);
@@ -251,6 +267,12 @@ int main(int argc, char **argv) {
                   "./config-json-build");
   g_assert_cmpstr(json_object_get_string_member(build, "dockerfile"), ==,
                   "Dockerfile");
+  list_service = json_object_get_object_member(services, "list-context");
+  list_build = json_object_get_object_member(list_service, "build");
+  additional_contexts =
+      json_object_get_object_member(list_build, "additional_contexts");
+  g_assert_cmpstr(json_object_get_string_member(additional_contexts, "extra"),
+                  ==, "./config-json-extra");
   mounts = json_object_get_array_member(app, "volumes");
   g_assert_cmpstr(json_array_get_string_element(mounts, 0), ==,
                   "./relative-volume:/data:ro");
