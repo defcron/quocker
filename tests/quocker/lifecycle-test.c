@@ -223,6 +223,17 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_true(g_file_test(qmp_socket, G_FILE_TEST_EXISTS));
   g_assert_true(g_file_set_contents(state_path, started_state, -1, &error));
   g_assert_no_error(error);
+  pid_t crashed_pid = (pid_t)g_ascii_strtoll(state_lines[0], NULL, 10);
+  g_assert_cmpint(kill(crashed_pid, SIGKILL), ==, 0);
+  g_usleep(100000);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "ps", &output));
+  g_assert_nonnull(strstr(output, "lifecycle-app\tstopped"));
+  g_free(output);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "start", &output));
+  g_assert_nonnull(strstr(output, "app: started"));
+  g_free(output);
   g_strfreev(state_lines);
   g_free(started_state);
   char *wait_arguments[] = {(char *)cli,

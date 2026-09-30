@@ -128,14 +128,18 @@ has a meaningful VM equivalent.
   follows dependency ordering, and kill accepts named/numeric signals. A
   per-project lifecycle lock serializes state-changing commands and volume
   removal checks across local Quocker processes. A fake
-  QEMU integration test covers stop, start, down, and wait. The `wait` command
-  blocks until selected saved VM processes stop and revalidates PID identity.
+  QEMU integration test covers stop, start, down, wait, and restarting a VM
+  after its QEMU process is abruptly killed while state remains on disk. The
+  `wait` command blocks until selected saved VM processes stop and revalidates
+  PID identity.
   `service_completed_successfully` waits for the dependency VM to exit and
   starts dependents only after guest-reported status zero. `up --wait` waits
   for OCI workload exec readiness and accepts `--wait-timeout`; local bootable
   disks can only be checked for a live QEMU process. Guest init reports
-  readiness only after successful `exec`. `service_healthy`, crash recovery,
-  and most command compatibility remain open.
+  readiness only after successful `exec`. Crash recovery has a fake-QEMU
+  regression for detecting the stopped process and starting the saved VM
+  again; recovery from ambiguous/reused PIDs and daemon restarts remain open.
+  `service_healthy` and most command compatibility remain open.
   `version` now
   reports the Quocker interface and QEMU base versions, with a short form and
   the existing `--version` alias covered by a CLI test. New state files
@@ -598,9 +602,11 @@ in user-facing compatibility promises.
 1. **Partially implemented:** new state records Linux `/proc` start-time ticks
    and validates them with the PID and QEMU name; signals use pidfds when
    supported and otherwise revalidate immediately before signaling. QEMU gets
-   a private per-VM QMP socket for pause/resume. Close the fallback race on
-   older kernels where possible, and complete stale-state recovery, QEMU crash
-   handling, daemon restarts, and concurrent CLI invocation locking.
+   a private per-VM QMP socket for pause/resume. A fake-QEMU regression now
+   kills a running VM abruptly, confirms `ps` reports it stopped, and restarts
+   it from saved state. Recover stale state safely when a PID has been reused,
+   close the fallback race on older kernels where possible, cover daemon
+   restarts, and finish concurrent CLI invocation locking.
 2. Define foreground and detached modes, console access, serial/agent logs,
    log rotation, event streams, and cleanup on signals.
 3. Run QEMU with least privilege and a reviewed sandbox configuration. Define
