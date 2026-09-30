@@ -1872,6 +1872,64 @@ static char *relative_path(const char *base, const char *path) {
   return g_string_free(relative, FALSE);
 }
 
+static gboolean config_volume_source_is_path(const char *source) {
+  return source &&
+         (g_path_is_absolute(source) || g_str_has_prefix(source, "./") ||
+          g_str_has_prefix(source, "../") || g_str_equal(source, ".") ||
+          g_str_equal(source, ".."));
+}
+
+static void config_resolve_volume_source(YNode *source, const char *base,
+                                         gboolean no_path_resolution) {
+  const char *value = node_string(source);
+  if (no_path_resolution || !config_volume_source_is_path(value)) {
+    return;
+  }
+  char *absolute = absolute_path(value, base);
+  g_free(source->scalar);
+  source->scalar = absolute;
+  g_clear_pointer(&source->compose_scalar, g_free);
+}
+
+static void config_resolve_service_volume_paths(YNode *service,
+                                                const char *base,
+                                                gboolean no_path_resolution) {
+  YNode *volumes = map_get(service, "volumes");
+  if (!volumes || volumes->kind != NODE_SEQUENCE) {
+    return;
+  }
+  for (guint i = 0; i < volumes->items->len; i++) {
+    YNode *volume = g_ptr_array_index(volumes->items, i);
+    if (volume->kind == NODE_MAPPING) {
+      config_resolve_volume_source(map_get(volume, "source"), base,
+                                   no_path_resolution);
+      continue;
+    }
+    const char *entry = node_string(volume);
+    if (!entry) {
+      continue;
+    }
+    gchar **parts = g_strsplit(entry, ":", 3);
+    guint count = g_strv_length(parts);
+    if (count >= 2 && config_volume_source_is_path(parts[0]) &&
+        !no_path_resolution) {
+      char *absolute = absolute_path(parts[0], base);
+      GString *updated = g_string_new(absolute);
+      g_string_append_c(updated, ':');
+      g_string_append(updated, parts[1]);
+      if (count == 3) {
+        g_string_append_c(updated, ':');
+        g_string_append(updated, parts[2]);
+      }
+      g_free(volume->scalar);
+      volume->scalar = g_string_free(updated, FALSE);
+      g_clear_pointer(&volume->compose_scalar, g_free);
+      g_free(absolute);
+    }
+    g_strfreev(parts);
+  }
+}
+
 static void map_remove(YNode *map, const char *key) {
   for (guint i = 0; i < map->items->len; i++) {
     YPair *pair = g_ptr_array_index(map->items, i);
@@ -2120,6 +2178,8 @@ static void resolve_included_service_paths(YNode *service,
       }
     }
   }
+  config_resolve_service_volume_paths(service, project_directory,
+                                     no_path_resolution);
 }
 
 static void resolve_included_model_paths(YNode *model,
@@ -2827,6 +2887,12 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
     g_free(*project_name_out);
     *project_name_out = NULL;
     return FALSE;
+  }
+  YNode *services = map_get(interpolated, "services");
+  for (guint i = 0; services && i < services->items->len; i++) {
+    YPair *service_pair = g_ptr_array_index(services->items, i);
+    config_resolve_service_volume_paths(service_pair->value, root,
+                                        no_path_resolution);
   }
   YNode *normalized_name = node_new(NODE_SCALAR, TAG_STR);
   normalized_name->scalar = g_strdup(*project_name_out);

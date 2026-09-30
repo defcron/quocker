@@ -56,6 +56,28 @@ int main(int argc, char **argv) {
   g_assert_cmpstr(json_object_get_string_member(environment,
                                                 "QUOCKER_TYPED_BOOL"),
                   ==, "true");
+  JsonArray *mounts = json_object_get_array_member(app, "volumes");
+  char *fixture_directory = g_path_get_dirname(argv[1]);
+  char *short_source_path =
+      g_build_filename(fixture_directory, "relative-volume", NULL);
+  char *expected_short_source =
+      g_canonicalize_filename(short_source_path, NULL);
+  char *expected_short_mount = g_strdup_printf("%s:/data:ro",
+                                               expected_short_source);
+  g_assert_cmpstr(json_array_get_string_element(mounts, 0), ==,
+                  expected_short_mount);
+  JsonObject *long_mount = json_array_get_object_element(mounts, 1);
+  char *long_source_path =
+      g_build_filename(fixture_directory, "..", "long-volume", NULL);
+  char *expected_long_source = g_canonicalize_filename(long_source_path, NULL);
+  g_assert_cmpstr(json_object_get_string_member(long_mount, "source"), ==,
+                  expected_long_source);
+  g_free(expected_long_source);
+  g_free(long_source_path);
+  g_free(expected_short_mount);
+  g_free(expected_short_source);
+  g_free(short_source_path);
+  g_free(fixture_directory);
   g_assert_cmpstr(json_object_get_string_member(environment,
                                                 "QUOCKER_DEFAULT_SET"),
                   ==, "present");
@@ -123,7 +145,7 @@ int main(int argc, char **argv) {
   g_assert_cmpuint(json_array_get_length(env_files), ==, 2);
   JsonObject *first_env_file =
       json_array_get_object_element(env_files, 0);
-  char *fixture_directory = g_path_get_dirname(argv[1]);
+  fixture_directory = g_path_get_dirname(argv[1]);
   char *fixture_env_path =
       g_build_filename(fixture_directory, "config-json-base.env", NULL);
   char *expected_env_path = g_canonicalize_filename(fixture_env_path, NULL);
@@ -159,6 +181,33 @@ int main(int argc, char **argv) {
                   ==, "${QUOCKER_CONFIG_INTERPOLATION_SET:-fallback}");
   g_assert_false(json_object_has_member(environment, "BASE_ONLY"));
   g_assert_true(json_object_has_member(app, "env_file"));
+
+  char *no_path_arguments[] = {
+      (char *)cli, (char *)"-f", argv[1], (char *)"config",
+      (char *)"--no-path-resolution", (char *)"--format", (char *)"json",
+      NULL};
+  g_free(output);
+  g_free(stderr_text);
+  output = NULL;
+  stderr_text = NULL;
+  status = 0;
+  g_assert_true(g_spawn_sync(NULL, no_path_arguments, NULL, G_SPAWN_DEFAULT,
+                             NULL, NULL, &output, &stderr_text, &status,
+                             &error));
+  g_assert_no_error(error);
+  g_assert_true(g_spawn_check_wait_status(status, &error));
+  g_assert_no_error(error);
+  g_assert_true(json_parser_load_from_data(parser, output, -1, &error));
+  g_assert_no_error(error);
+  root = json_node_get_object(json_parser_get_root(parser));
+  services = json_object_get_object_member(root, "services");
+  app = json_object_get_object_member(services, "app");
+  mounts = json_object_get_array_member(app, "volumes");
+  g_assert_cmpstr(json_array_get_string_element(mounts, 0), ==,
+                  "./relative-volume:/data:ro");
+  long_mount = json_array_get_object_element(mounts, 1);
+  g_assert_cmpstr(json_object_get_string_member(long_mount, "source"), ==,
+                  "../long-volume");
 
   g_object_unref(parser);
   g_free(stderr_text);

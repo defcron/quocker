@@ -31,3 +31,9 @@ services:
       QUOCKER_COLON_PLUS_SET: ${QUOCKER_CONFIG_INTERPOLATION_SET:+yes}
       QUOCKER_COLON_PLUS_MISSING: ${QUOCKER_CONFIG_INTERPOLATION_MISSING:+yes}
       QUOCKER_COLON_PLUS_EMPTY: ${QUOCKER_CONFIG_INTERPOLATION_EMPTY:+yes}
+    volumes:
+      - "./relative-volume:/data:ro"
+      - type: bind
+        source: ../long-volume
+        target: /long
+        read_only: true
