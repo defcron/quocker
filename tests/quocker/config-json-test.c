@@ -133,6 +133,33 @@ int main(int argc, char **argv) {
   g_free(fixture_env_path);
   g_free(fixture_directory);
 
+  char *no_interpolate_arguments[] = {
+      (char *)cli, (char *)"-f", argv[1], (char *)"config",
+      (char *)"--no-interpolate", (char *)"--format", (char *)"json",
+      NULL};
+  g_free(output);
+  g_free(stderr_text);
+  output = NULL;
+  stderr_text = NULL;
+  status = 0;
+  g_assert_true(g_spawn_sync(NULL, no_interpolate_arguments, NULL,
+                             G_SPAWN_DEFAULT, NULL, NULL, &output,
+                             &stderr_text, &status, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_spawn_check_wait_status(status, &error));
+  g_assert_no_error(error);
+  g_assert_true(json_parser_load_from_data(parser, output, -1, &error));
+  g_assert_no_error(error);
+  root = json_node_get_object(json_parser_get_root(parser));
+  services = json_object_get_object_member(root, "services");
+  app = json_object_get_object_member(services, "app");
+  environment = json_object_get_object_member(app, "environment");
+  g_assert_cmpstr(json_object_get_string_member(environment,
+                                                "QUOCKER_DEFAULT_SET"),
+                  ==, "${QUOCKER_CONFIG_INTERPOLATION_SET:-fallback}");
+  g_assert_false(json_object_has_member(environment, "BASE_ONLY"));
+  g_assert_true(json_object_has_member(app, "env_file"));
+
   g_object_unref(parser);
   g_free(stderr_text);
   g_free(output);

@@ -396,6 +396,8 @@ in user-facing compatibility promises.
    each service's `environment` map by default. `-o`/`--output` atomically writes
    rendered YAML or JSON. `--no-env-resolution` preserves service env-file
    declarations with absolute paths and skips reading their contents.
+   `--no-interpolate` preserves Compose variable expressions and skips service
+   env-file resolution while still merging and validating the Compose model.
    Schema-aware normalization, image resolution, path output modes, and the
    remaining Docker Compose config flags remain.
 9. **Partially implemented:** service-level `x-quocker` is versioned as
