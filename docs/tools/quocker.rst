@@ -144,14 +144,14 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
        Docker's global ``--all-resources`` has no VM equivalent.
    * - ``up``
      - ``-d``/``--detach``, ``--wait``, ``--wait-timeout SECONDS``,
-       ``--dry-run``, and service names.
-     - Build, pull-policy, recreate, attach selection, orphan-removal,
+       ``--dry-run``, ``--remove-orphans``, and service names.
+     - Build, pull-policy, recreate, attach selection,
        scaling, timeout, menu, watch, and interactive confirmation options.
        See the `Compose up reference <https://docs.docker.com/reference/cli/docker/compose/up/>`_.
    * - ``down``
      - ``--volumes``/``-v``, ``--dry-run``, ``-t``/``--timeout SECONDS``
-       (default 10), and service names.
-     - ``--remove-orphans`` and ``--rmi``. See the
+       (default 10), ``--remove-orphans``, and service names.
+     - ``--rmi``. See the
        `Compose down reference <https://docs.docker.com/reference/cli/docker/compose/down/>`_.
    * - ``ps``
      - Service names; by default lists running saved VMs, including saved VMs
@@ -207,7 +207,7 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
        `Compose pull reference <https://docs.docker.com/reference/cli/docker/compose/pull/>`_.
    * - ``wait``
      - Service names; waits for saved QEMU processes to stop.
-     - Container exit-code reporting and container selection options.
+     - Container-specific selection options.
    * - ``port``
      - ``SERVICE PRIVATE_PORT[/PROTOCOL]``.
      - Container index selection and container port semantics.

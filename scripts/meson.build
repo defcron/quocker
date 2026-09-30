@@ -436,6 +436,12 @@ if not get_option('quocker').disabled()
          depends: [quocker, quocker_fake_qemu, quocker_fake_qemu_img],
          suite: ['quocker'])
 
+    quocker_orphans_test = executable(
+      'quocker-orphans-test', files('../tests/quocker/orphans-test.c'),
+      dependencies: [glib])
+    test('quocker-remove-orphans', quocker_orphans_test,
+         args: [quocker.full_path()], depends: [quocker], suite: ['quocker'])
+
     quocker_kernel_test = executable(
       'quocker-kernel-test',
       [files('../tests/quocker/kernel-test.c'), 'quocker-kernel.c'],

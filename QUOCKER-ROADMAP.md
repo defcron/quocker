@@ -88,7 +88,7 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 75 focused tests; its latest run reported 49
+  Meson suite currently has 76 focused tests; its latest run reported 50
   passes, 26 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers
@@ -401,8 +401,13 @@ in user-facing compatibility promises.
    rejected. `ps --services` prints matching service names, and `ps --format
    json` emits documented VM-specific JSON Lines. Keep this inventory current
    as flags are implemented. `ps` also lists orphaned saved VMs by default;
-   `--orphans=false` filters those out.
-   fill in exact option-by-option coverage for less common Compose commands.
+   `--orphans=false` filters those out. `up` and `down` accept
+   `--remove-orphans`; cleanup uses the same guarded shutdown path as declared
+   VMs. Dry runs display orphan cleanup without changing saved state. Removing
+   an orphan deletes its VM state but preserves its disk unless ``--volumes``
+   is requested.
+   The option inventory for less common commands still needs exact
+   option-by-option coverage.
 2. Complete core commands and their normal flags: `up`, `down`, `ps`, `logs`,
    `config`, `start`, `stop`, `restart`, `kill`, `rm`, `pause`, `unpause`,
    `pull`, `build`, `create`, `run`, `exec`, `cp`, `port`, `events`, `top`,
@@ -442,7 +447,7 @@ in user-facing compatibility promises.
    required profiled dependencies are rejected. Optional dependencies marked
    ``required: false`` warn and skip missing or inactive-profile services.
    Complete profile validation, scaling
-   where appropriate, recreation policies, orphan handling, readiness timeout
+   where appropriate, recreation policies, readiness timeout
    handling for other lifecycle operations, and interruption/signals.
 4. Match project naming, labels/metadata, project listing, working directory,
    file precedence, exit codes, and common output/TTY behavior.

@@ -89,6 +89,7 @@ typedef struct Options {
   gboolean dry_run;
   int signal_number;
   gboolean remove_volumes;
+  gboolean remove_orphans;
   gboolean follow;
   gboolean logs_tail_set;
   gboolean logs_tail_all;
@@ -5624,6 +5625,13 @@ typedef struct UpContext {
   gint64 wait_deadline;
 } UpContext;
 
+static gboolean remove_orphan_services(const char *project,
+                                       const char *directory,
+                                       YNode *services,
+                                       gboolean remove_volumes,
+                                       gboolean dry_run,
+                                       guint shutdown_timeout_seconds);
+
 typedef struct PublishedPortOwner {
   const char *service;
   PortBinding *binding;
@@ -6194,10 +6202,15 @@ static gboolean run_up_services(YNode *services, Options *opts,
       project,
       directory,
       !opts->dry_run};
-  gboolean ok = for_up_services(services, opts, preflight_service_ports,
-                                &preflight);
+  gboolean ok = for_up_services(services, opts, preflight_service_settings,
+                                &context);
+  if (ok && opts->remove_orphans) {
+    ok = remove_orphan_services(project, directory, services, FALSE,
+                                opts->dry_run,
+                                opts->shutdown_timeout_seconds);
+  }
   if (ok) {
-    ok = for_up_services(services, opts, preflight_service_settings, &context);
+    ok = for_up_services(services, opts, preflight_service_ports, &preflight);
   }
   if (ok) {
     ok = for_up_services(services, opts, up_one, &context);
@@ -6468,6 +6481,58 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
   g_free(state);
   g_free(pidfile);
   return TRUE;
+}
+
+static gboolean remove_orphan_services(const char *project,
+                                       const char *directory,
+                                       YNode *services,
+                                       gboolean remove_volumes,
+                                       gboolean dry_run,
+                                       guint shutdown_timeout_seconds) {
+  struct stat directory_stat;
+  if (g_lstat(directory, &directory_stat) < 0) {
+    if (errno == ENOENT) {
+      return TRUE;
+    }
+    fail("could not inspect saved VM directory: %s", g_strerror(errno));
+    return FALSE;
+  }
+  if (!S_ISDIR(directory_stat.st_mode) || directory_stat.st_uid != geteuid() ||
+      (directory_stat.st_mode & (S_IWGRP | S_IWOTH))) {
+    fail("saved VM directory is unsafe; refusing to remove orphan services");
+    return FALSE;
+  }
+  GError *error = NULL;
+  GDir *saved = g_dir_open(directory, 0, &error);
+  if (!saved) {
+    fail("could not open saved VM directory: %s",
+         error ? error->message : "unknown error");
+    g_clear_error(&error);
+    return FALSE;
+  }
+  GPtrArray *orphans = g_ptr_array_new_with_free_func(g_free);
+  const char *entry;
+  while ((entry = g_dir_read_name(saved))) {
+    if (!g_str_has_suffix(entry, ".state")) {
+      continue;
+    }
+    char *name = g_strndup(entry, strlen(entry) - strlen(".state"));
+    if (valid_service_name(name) && !map_get(services, name)) {
+      g_ptr_array_add(orphans, name);
+    } else {
+      g_free(name);
+    }
+  }
+  g_dir_close(saved);
+  g_ptr_array_sort(orphans, compare_string_pointers);
+  DownContext context = {project, directory, services, remove_volumes, dry_run,
+                         shutdown_timeout_seconds};
+  gboolean ok = TRUE;
+  for (guint i = 0; ok && i < orphans->len; i++) {
+    ok = down_one(g_ptr_array_index(orphans, i), NULL, &context);
+  }
+  g_ptr_array_free(orphans, TRUE);
+  return ok;
 }
 
 typedef struct ListContext {
@@ -7009,6 +7074,7 @@ static void usage(FILE *file) {
           "      --env-file FILE         Set interpolation environment file\n"
           "      --profile PROFILE       Enable a service profile\n\n"
           "  up --wait [--wait-timeout SEC] Wait for guest workloads to be ready\n"
+          "  up|down --remove-orphans Remove saved VMs absent from this file\n"
           "  stop|restart|down -t, --timeout SEC Graceful stop timeout\n"
           "  ps -a, --all              Include stopped saved VMs\n"
           "  ps --orphans[=BOOL]       Include undeclared saved VMs (default true)\n"
@@ -7198,6 +7264,10 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       }
     } else if (opts->command && g_str_equal(arg, "-v")) {
       opts->remove_volumes = TRUE;
+    } else if (opts->command && g_str_equal(arg, "--remove-orphans") &&
+               (g_str_equal(opts->command, "up") ||
+                g_str_equal(opts->command, "down"))) {
+      opts->remove_orphans = TRUE;
     } else if (opts->command &&
                (g_str_equal(arg, "-f") || g_str_equal(arg, "--follow")) &&
                g_str_equal(opts->command, "logs")) {
@@ -7398,7 +7468,8 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       (opts->services->len || opts->files->len || opts->env_files->len ||
        opts->project_name || opts->project_directory || opts->port_spec ||
        opts->quiet || opts->detach || opts->dry_run || opts->remove_volumes ||
-       opts->follow || opts->wait_for_ready || opts->wait_timeout_set)) {
+       opts->remove_orphans || opts->follow || opts->wait_for_ready ||
+       opts->wait_timeout_set)) {
     fail("version accepts only the optional --short flag");
     return FALSE;
   }
@@ -8029,6 +8100,11 @@ int main(int argc, char **argv) {
                            opts.dry_run,
                            opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, down_one, &context);
+    if (ok && opts.remove_orphans && g_str_equal(opts.command, "down")) {
+      ok = remove_orphan_services(project_lower, directory, services,
+                                  opts.remove_volumes, opts.dry_run,
+                                  opts.shutdown_timeout_seconds);
+    }
   } else if (g_str_equal(opts.command, "ps")) {
     gboolean json = g_str_equal(opts.ps_format ? opts.ps_format : "table",
                                 "json");
