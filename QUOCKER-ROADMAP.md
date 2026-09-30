@@ -364,10 +364,15 @@ in user-facing compatibility promises.
    OCI-workload-only, unsupported, Quocker-specific, selection-only, or
    preserved-only, and separately reports declared top-level volumes,
    networks, configs, and secrets with runtime status. Nested service-value
-   paths are also emitted and inherit their parent field's status; per-leaf
-   runtime classifications, source-aware reporting for other schema
-   diagnostics, strict versus permissive handling, and exhaustive reporting
-   for every Compose resource remain.
+   paths are also emitted and inherit their parent field's status. Runtime
+   preflight now accounts for the complete pinned Compose service-field set:
+   every field is mapped, partially supported, OCI-workload-only,
+   selection-only, Quocker-specific, unsupported, or explicitly preserved-only.
+   Non-empty unsupported settings produce field-specific errors during a
+   preflight of all selected services before any VM starts. Per-leaf runtime
+   classifications, source-aware reporting for other schema diagnostics,
+   strict versus permissive handling, and exhaustive reporting for every
+   Compose resource remain.
 8. **Partially implemented:** profiles and project-name resolution work for
    service selection and interpolation. `config` emits YAML or JSON, lists
    sorted services, profiles, images, volumes, or networks, and prints the

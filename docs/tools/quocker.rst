@@ -266,9 +266,11 @@ partially supported Compose fields, OCI guest workload settings, unsupported
 settings, and fields that are preserved without runtime behavior. OCI workload
 settings such as ``command`` and ``volumes`` do not apply to local disk
 services; partial support details are listed below and in each resource's
-runtime diagnostics. Nested service values are listed by their YAML path and
-inherit the containing service field's status. A second ``RESOURCE`` table
-reports declared top-level
+runtime diagnostics. ``up`` rejects non-empty unsupported service settings
+with the field name in the error, after preflighting every selected service
+and before starting any VM. Nested service values are listed by their YAML
+path and inherit the containing service field's status. A second
+``RESOURCE`` table reports declared top-level
 ``volumes``, ``networks``, ``configs``, and ``secrets`` with their current VM
 runtime status, including unsupported guest config and secret provisioning.
 Quocker also reads ``COMPOSE_FILE``, ``COMPOSE_PATH_SEPARATOR``,

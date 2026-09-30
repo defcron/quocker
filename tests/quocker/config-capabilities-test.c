@@ -32,8 +32,8 @@ int main(int argc, char **argv) {
       "local\timage\tVM image source",
       "local\tmem_limit\tQEMU setting",
       "local\tports\tpartially supported; see Quocker field documentation",
-      "local\thostname\tunsupported",
-      "local\tlabels\tpreserved-only; no runtime behavior implemented",
+      "local\tsecurity_opt\tunsupported",
+      "local\tlabels\tunsupported",
       "guest\tcommand\tOCI guest workload setting",
       "guest\tworking_dir\tOCI guest workload setting",
       "guest\thealthcheck\tunsupported",
@@ -58,6 +58,32 @@ int main(int argc, char **argv) {
     if (error) {
       g_printerr("%s\n", error->message);
     }
+  }
+  g_clear_error(&error);
+  g_free(stdout_text);
+  g_free(stderr_text);
+
+  char up[] = "up";
+  char *up_command[] = {argv[1], file_option, argv[2], up, NULL};
+  stdout_text = NULL;
+  stderr_text = NULL;
+  status = 0;
+  if (!g_spawn_sync(NULL, up_command, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+                    &stdout_text, &stderr_text, &status, &error)) {
+    ok = FALSE;
+  } else {
+    GError *status_error = NULL;
+    gboolean up_succeeded = g_spawn_check_wait_status(status, &status_error);
+    ok = ok && !up_succeeded && stderr_text &&
+         strstr(stderr_text,
+                "cannot translate Compose option 'security_opt'") !=
+             NULL;
+    g_clear_error(&status_error);
+  }
+  if (!ok) {
+    g_printerr("unsupported runtime setting was not diagnosed:\n%s%s\n",
+               stdout_text ? stdout_text : "",
+               stderr_text ? stderr_text : "");
   }
   g_clear_error(&error);
   g_free(stdout_text);

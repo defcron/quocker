@@ -122,11 +122,26 @@ static const char *TAG_NULL = "tag:yaml.org,2002:null";
 static gboolean service_image_is_local(YNode *service, const char *root);
 
 static const char *const unsupported_service_fields[] = {
-    "build", "command", "entrypoint", "environment", "env_file",
-    "volumes", "networks", "healthcheck", "secrets", "configs",
-    "container_name", "hostname", "user", "working_dir", "privileged",
-    "cap_add", "cap_drop", "devices", "tmpfs", "expose", "read_only",
-    "stdin_open", "tty", "restart", "develop", NULL,
+    "annotations", "attach", "blkio_config", "build", "cap_add", "cap_drop",
+    "cgroup", "cgroup_parent", "command", "configs", "container_name",
+    "cpu_count",
+    "cpu_percent", "cpu_period", "cpu_quota", "cpu_rt_period",
+    "cpu_rt_runtime", "cpu_shares", "cpuset", "credential_spec",
+    "deploy", "device_cgroup_rules", "devices", "develop", "dns", "dns_opt",
+    "dns_search", "domainname", "entrypoint", "env_file", "environment",
+    "expose", "external_links", "extra_hosts", "gpus", "group_add",
+    "healthcheck", "hostname", "init", "ipc", "isolation", "label_file",
+    "links", "logging", "mac_address", "mem_reservation",
+    "mem_swappiness",
+    "memswap_limit", "models", "networks", "oom_kill_disable",
+    "oom_score_adj", "pid", "pids_limit", "post_start", "pre_start",
+    "pre_stop", "privileged", "provider", "pull_policy",
+    "pull_refresh_after", "read_only", "restart", "runtime", "scale",
+    "secrets", "security_opt", "labels", "shm_size", "stdin_open",
+    "stop_grace_period",
+    "stop_signal", "storage_opt", "sysctls", "tmpfs", "tty", "ulimits",
+    "use_api_socket", "user", "userns_mode", "uts", "volumes",
+    "volumes_from", "working_dir", NULL,
 };
 
 static char *user_kernel_catalog_path(void) {
@@ -5716,6 +5731,13 @@ static gboolean preflight_service_ports(const char *name, YNode *service,
   return TRUE;
 }
 
+static gboolean preflight_service_settings(const char *name, YNode *service,
+                                           void *data) {
+  UpContext *context = data;
+  gboolean oci_guest = !service_image_is_local(service, context->root);
+  return !unsupported_service_settings(service, name, oci_guest);
+}
+
 static void published_port_owner_free(PublishedPortOwner *owner) {
   if (owner) {
     port_binding_free(owner->binding);
@@ -6174,6 +6196,9 @@ static gboolean run_up_services(YNode *services, Options *opts,
       !opts->dry_run};
   gboolean ok = for_up_services(services, opts, preflight_service_ports,
                                 &preflight);
+  if (ok) {
+    ok = for_up_services(services, opts, preflight_service_settings, &context);
+  }
   if (ok) {
     ok = for_up_services(services, opts, up_one, &context);
   }
