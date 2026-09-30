@@ -16,11 +16,13 @@
 #include "quocker-volume.h"
 #include "quocker-kernel.h"
 #include "quocker-oci.h"
+#include <arpa/inet.h>
 #include <errno.h>
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 #include <math.h>
+#include <netinet/in.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -5062,7 +5064,46 @@ typedef struct PublishedPortOwner {
 
 typedef struct PortPreflight {
   GPtrArray *published;
+  const char *project;
+  const char *directory;
+  gboolean check_host_ports;
 } PortPreflight;
+
+static gboolean host_port_available(const char *service,
+                                    const PortBinding *binding) {
+  int socket_type = g_str_equal(binding->protocol, "udp") ? SOCK_DGRAM
+                                                            : SOCK_STREAM;
+  int fd = socket(AF_INET, socket_type | SOCK_CLOEXEC, 0);
+  if (fd < 0) {
+    fail("service '%s': cannot check host port %u/%s: %s", service,
+         binding->host_port, binding->protocol, g_strerror(errno));
+    return FALSE;
+  }
+  struct sockaddr_in address = {.sin_family = AF_INET,
+                                .sin_port = htons(binding->host_port)};
+  if (!binding->host_ip || !*binding->host_ip ||
+      g_str_equal(binding->host_ip, "0.0.0.0")) {
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+  } else if (inet_pton(AF_INET, binding->host_ip, &address.sin_addr) != 1) {
+    close(fd);
+    fail("service '%s': invalid IPv4 host address '%s'", service,
+         binding->host_ip);
+    return FALSE;
+  }
+  if (bind(fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+    int saved_errno = errno;
+    close(fd);
+    const char *host = binding->host_ip && *binding->host_ip
+                           ? binding->host_ip
+                           : "0.0.0.0";
+    fail("service '%s': host address %s port %u/%s is unavailable: %s",
+         service, host, binding->host_port, binding->protocol,
+         g_strerror(saved_errno));
+    return FALSE;
+  }
+  close(fd);
+  return TRUE;
+}
 
 static gboolean preflight_service_ports(const char *name, YNode *service,
                                         void *data) {
@@ -5094,6 +5135,16 @@ static gboolean preflight_service_ports(const char *name, YNode *service,
           g_str_equal(binding->protocol, other->protocol) && address_overlap) {
         fail("services '%s' and '%s' both publish %s host port %u",
              owner->service, name, binding->protocol, binding->host_port);
+        g_ptr_array_free(bindings, TRUE);
+        return FALSE;
+      }
+    }
+    if (preflight->check_host_ports) {
+      pid_t pid = read_pid(preflight->directory, name);
+      gboolean service_running = process_running(
+          pid, preflight->project, name,
+          state_process_start_time(preflight->directory, name));
+      if (!service_running && !host_port_available(name, binding)) {
         g_ptr_array_free(bindings, TRUE);
         return FALSE;
       }
@@ -5265,7 +5316,10 @@ static gboolean run_up_services(YNode *services, Options *opts,
                        project_environment, opts->dry_run, start_only};
   PortPreflight preflight = {
       g_ptr_array_new_with_free_func(
-          (GDestroyNotify)published_port_owner_free)};
+          (GDestroyNotify)published_port_owner_free),
+      project,
+      directory,
+      !opts->dry_run};
   gboolean ok = for_up_services(services, opts, preflight_service_ports,
                                 &preflight);
   if (ok) {

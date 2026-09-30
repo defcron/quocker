@@ -208,6 +208,11 @@ host bindings are rejected because the QEMU user network forwarding interface
 does not support them. ``up --dry-run`` prints the generated QEMU forwarding
 rules. A missing published port (for example, ``"80"`` or long-form
 ``target: 80``) asks QEMU to allocate an ephemeral host port.
+Before launching selected VMs, ``up`` also probes static IPv4 TCP/UDP host
+bindings and fails with an unavailable-port diagnostic when another process
+already holds the requested address and port. The probe releases its socket
+before QEMU starts, so it cannot prevent a separate process from claiming the
+port in the meantime; QEMU performs the final bind.
 ``quocker port SERVICE PORT[/tcp|udp]`` prints static bindings even when the
 VM is stopped; for ephemeral bindings it queries QEMU over the private QMP
 socket and therefore requires a running VM. Guests receive QEMU user-mode

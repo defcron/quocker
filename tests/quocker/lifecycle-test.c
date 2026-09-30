@@ -1,7 +1,10 @@
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <netinet/in.h>
 #include <signal.h>
+#include <sys/socket.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -288,9 +291,68 @@ static void test_stop_preserves_vm_state(void) {
   g_free(directory);
 }
 
+static void test_up_rejects_host_port_used_by_other_process(void) {
+  const char *cli = g_getenv("QUOCKER_CLI");
+  g_assert_nonnull(cli);
+  int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  g_assert_cmpint(fd, >=, 0);
+  struct sockaddr_in address = {.sin_family = AF_INET,
+                                .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+                                .sin_port = 0};
+  g_assert_cmpint(bind(fd, (struct sockaddr *)&address, sizeof(address)), ==,
+                  0);
+  socklen_t address_length = sizeof(address);
+  g_assert_cmpint(getsockname(fd, (struct sockaddr *)&address, &address_length),
+                  ==, 0);
+
+  GError *error = NULL;
+  char *directory = g_dir_make_tmp("quocker-port-collision-XXXXXX", &error);
+  g_assert_no_error(error);
+  char *compose = g_build_filename(directory, "compose.yaml", NULL);
+  char *contents = g_strdup_printf(
+      "services:\n  app:\n    image: ./disk.qcow2\n    ports:\n"
+      "      - \"127.0.0.1:%u:80\"\n",
+      ntohs(address.sin_port));
+  g_assert_true(g_file_set_contents(compose, contents, -1, &error));
+  g_assert_no_error(error);
+  g_free(contents);
+  gchar *output = NULL;
+  g_assert_false(run_cli(cli, directory, compose, "up", &output));
+  g_free(output);
+  close(fd);
+
+  int udp_fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+  g_assert_cmpint(udp_fd, >=, 0);
+  address.sin_port = 0;
+  g_assert_cmpint(bind(udp_fd, (struct sockaddr *)&address, sizeof(address)),
+                  ==, 0);
+  address_length = sizeof(address);
+  g_assert_cmpint(getsockname(udp_fd, (struct sockaddr *)&address,
+                              &address_length),
+                  ==, 0);
+  contents = g_strdup_printf(
+      "services:\n  app:\n    image: ./disk.qcow2\n    ports:\n"
+      "      - \"127.0.0.1:%u:53/udp\"\n",
+      ntohs(address.sin_port));
+  g_assert_true(g_file_set_contents(compose, contents, -1, &error));
+  g_assert_no_error(error);
+  g_free(contents);
+  output = NULL;
+  g_assert_false(run_cli(cli, directory, compose, "up", &output));
+  g_free(output);
+  close(udp_fd);
+
+  g_unlink(compose);
+  g_rmdir(directory);
+  g_free(compose);
+  g_free(directory);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/quocker/lifecycle/stop-preserves-state",
                   test_stop_preserves_vm_state);
+  g_test_add_func("/quocker/lifecycle/host-port-collision",
+                  test_up_rejects_host_port_used_by_other_process);
   return g_test_run();
 }

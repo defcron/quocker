@@ -508,9 +508,11 @@ in user-facing compatibility promises.
    user networking, including dynamic host-port allocation and QMP lookup of
    assigned endpoints. `up` preflights selected services (including selected
    dependencies) for overlapping static host-port bindings before launching
-   any VM. IPv6 host bindings are rejected because QEMU's current user-network
-   host-forward parser does not support them. Remaining: host-wide collision
-   detection against unrelated processes and broader syntax fixtures.
+   any VM and probes static IPv4 TCP/UDP bindings against the host socket table
+   to report ports already held by unrelated local processes. This probe cannot
+   reserve a port, so QEMU's bind remains authoritative if a race occurs. IPv6
+   host bindings are rejected because QEMU's current user-network host-forward
+   parser does not support them. Broader syntax fixtures remain.
 3. Select and document backends (QEMU user networking, bridge/tap, or another
    backend) with install and privilege requirements. Make backend choice
    explicit and inspectable.
