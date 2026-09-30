@@ -91,6 +91,7 @@ typedef struct Options {
   gboolean logs_tail_set;
   gboolean logs_tail_all;
   guint logs_tail;
+  gboolean logs_no_prefix;
   gboolean quiet;
   gboolean short_version;
   GPtrArray *services;
@@ -6577,6 +6578,15 @@ typedef struct LogsContext {
   Options *opts;
 } LogsContext;
 
+static void logs_print_line(const char *name, const char *line,
+                            gboolean no_prefix) {
+  if (no_prefix) {
+    g_print("%s\n", line);
+  } else {
+    g_print("%s | %s\n", name, line);
+  }
+}
+
 static gboolean logs_one(const char *name, YNode *service, void *data) {
   LogsContext *ctx = data;
   char *path = g_strdup_printf("%s/%s.log", ctx->directory, name);
@@ -6595,7 +6605,7 @@ static gboolean logs_one(const char *name, YNode *service, void *data) {
     for (guint i = 0; lines[i]; i++) {
       if (*lines[i]) {
         if (line_index++ >= skip) {
-          g_print("%s | %s\n", name, lines[i]);
+          logs_print_line(name, lines[i], ctx->opts->logs_no_prefix);
         }
       }
     }
@@ -6610,9 +6620,57 @@ static volatile sig_atomic_t follow_running = 1;
 
 static void stop_follow(int signal_number) { follow_running = 0; }
 
+typedef struct FollowLog {
+  guint64 offset;
+  GString *pending;
+} FollowLog;
+
+static void follow_log_free(FollowLog *log) {
+  if (log) {
+    g_string_free(log->pending, TRUE);
+    g_free(log);
+  }
+}
+
+static void follow_log_consume(const char *name, FollowLog *log,
+                               const char *data, gsize length,
+                               gboolean no_prefix, gboolean flush_partial) {
+  const gsize max_line_size = 64 * 1024;
+  g_string_append_len(log->pending, data, length);
+  while (TRUE) {
+    char *newline = memchr(log->pending->str, '\n', log->pending->len);
+    if (!newline && !flush_partial && log->pending->len <= max_line_size) {
+      break;
+    }
+    if (!newline && flush_partial && !log->pending->len) {
+      break;
+    }
+    gsize line_length = newline ? (gsize)(newline - log->pending->str)
+                                : MIN(log->pending->len, max_line_size);
+    if (newline && line_length &&
+        log->pending->str[line_length - 1] == '\r') {
+      line_length--;
+    }
+    if (line_length) {
+      char *line = g_strndup(log->pending->str, line_length);
+      logs_print_line(name, line, no_prefix);
+      g_free(line);
+    }
+    gsize consumed = newline ? (gsize)(newline - log->pending->str) + 1
+                             : line_length;
+    g_string_erase(log->pending, 0, consumed);
+    if (!newline && !flush_partial &&
+        log->pending->len <= max_line_size) {
+      break;
+    }
+  }
+  fflush(stdout);
+}
+
 static void follow_logs(YNode *services, Options *opts, const char *directory) {
   GHashTable *offsets =
-      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                            (GDestroyNotify)follow_log_free);
   for (guint i = 0; i < services->items->len; i++) {
     YPair *pair = g_ptr_array_index(services->items, i);
     const char *name = node_string(pair->key);
@@ -6625,11 +6683,12 @@ static void follow_logs(YNode *services, Options *opts, const char *directory) {
     if (selected) {
       char *path = g_strdup_printf("%s/%s.log", directory, name);
       GStatBuf statbuf;
-      guint64 *offset = g_new0(guint64, 1);
+      FollowLog *log = g_new0(FollowLog, 1);
+      log->pending = g_string_new(NULL);
       if (g_stat(path, &statbuf) == 0) {
-        *offset = statbuf.st_size;
+        log->offset = statbuf.st_size;
       }
-      g_hash_table_insert(offsets, g_strdup(name), offset);
+      g_hash_table_insert(offsets, g_strdup(name), log);
       g_free(path);
     }
   }
@@ -6641,21 +6700,30 @@ static void follow_logs(YNode *services, Options *opts, const char *directory) {
     g_hash_table_iter_init(&iter, offsets);
     while (g_hash_table_iter_next(&iter, &key, &value)) {
       const char *name = key;
-      guint64 *offset = value;
+      FollowLog *log = value;
       char *path = g_strdup_printf("%s/%s.log", directory, name);
       gchar *contents = NULL;
       gsize length = 0;
       if (g_file_get_contents(path, &contents, &length, NULL) &&
-          length > *offset) {
-        const char *new_data = contents + *offset;
-        fwrite(new_data, 1, length - *offset, stdout);
-        fflush(stdout);
-        *offset = length;
+          length >= log->offset && length > log->offset) {
+        follow_log_consume(name, log, contents + log->offset,
+                           length - log->offset, opts->logs_no_prefix, FALSE);
+        log->offset = length;
+      } else if (length < log->offset) {
+        log->offset = 0;
+        g_string_truncate(log->pending, 0);
       }
       g_free(contents);
       g_free(path);
     }
     g_usleep(250000);
+  }
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, offsets);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    FollowLog *log = value;
+    follow_log_consume(key, log, "", 0, opts->logs_no_prefix, TRUE);
   }
   signal(SIGINT, SIG_DFL);
   g_hash_table_destroy(offsets);
@@ -6841,6 +6909,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
         opts->logs_tail_all = FALSE;
         opts->logs_tail = (guint)count;
       }
+    } else if (opts->command && g_str_equal(opts->command, "logs") &&
+               g_str_equal(arg, "--no-log-prefix")) {
+      opts->logs_no_prefix = TRUE;
     } else if (opts->command && g_str_equal(arg, "-f") &&
                g_str_equal(opts->command, "rm")) {
       /* Docker Compose's rm --force is accepted as a no-op here. */

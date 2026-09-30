@@ -60,7 +60,8 @@ treated as successful.
      - VM-adapted, partial
      - Reads captured serial output; container log drivers and full formatting
        options do not apply. ``--tail`` and ``-n`` accept a non-negative line
-       count or ``all``; ``-f``/``--follow`` streams subsequent output.
+       count or ``all``; ``--no-log-prefix`` omits the service prefix;
+       ``-f``/``--follow`` streams subsequent output with consistent formatting.
    * - ``config``
      - VM-adapted, partial
      - Validates, resolves, merges, renders, and lists selected Compose model
@@ -453,8 +454,10 @@ Compose schema before rendering. Schema validation checks file structure and
 syntax; it does not mean every accepted field has a VM runtime implementation.
 ``quocker up -d`` starts all services. ``quocker ps`` shows their state and
 disk overlays. ``quocker logs [SERVICE]`` shows serial output;
-``quocker logs --tail 20`` shows only its last twenty non-empty lines, and
-``quocker logs -f``/``--follow`` follows subsequent output.
+``quocker logs --tail 20`` shows only its last twenty non-empty lines.
+``quocker logs --no-log-prefix`` omits the service name prefix, and
+``quocker logs -f``/``--follow`` follows subsequent output using the same
+prefix setting.
 ``quocker down`` stops services while retaining
 their disks. ``quocker down --volumes`` stops services and removes their
 overlays and project volume disks. ``quocker volume ls`` lists persistent VM

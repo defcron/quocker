@@ -394,8 +394,9 @@ in user-facing compatibility promises.
    `stop`, `restart`, `kill`,
    `pause`, and `unpause` now have initial saved-VM process handling; pause and
    resume use QMP, and the fake-QEMU integration test exercises these commands.
-   `logs --tail N|all` selects the last saved serial lines and `--follow`
-   streams subsequent output. `wait` blocks until selected VM processes stop
+   `logs --tail N|all` selects saved serial lines, `--no-log-prefix` controls
+   service prefixes, and `--follow` streams complete lines with consistent
+   formatting. `wait` blocks until selected VM processes stop
    and checks the recorded process identity; it does not print guest workload
    exit codes.
    `up --wait` waits for OCI workload exec readiness and accepts
