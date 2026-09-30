@@ -7,3 +7,9 @@ services:
   alpha:
     image: registry.example/alpha:latest
     profiles: [blue]
+volumes:
+  data: {}
+  cache: {}
+networks:
+  frontend: {}
+  backend: {}

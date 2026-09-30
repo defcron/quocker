@@ -326,10 +326,10 @@ in user-facing compatibility promises.
    path, but not the source filename/line or capability classification;
    strict versus permissive handling and unsupported-field reporting remain.
 8. **Partially implemented:** profiles and project-name resolution work for
-   service selection and interpolation. `config` emits YAML or JSON and lists
-   sorted services, profiles, or images, and prints the interpolation
-   environment. Schema-aware normalization, image resolution, path output
-   modes, and the remaining Docker Compose config flags remain.
+   service selection and interpolation. `config` emits YAML or JSON, lists
+   sorted services, profiles, images, volumes, or networks, and prints the
+   interpolation environment. Schema-aware normalization, image resolution,
+   path output modes, and the remaining Docker Compose config flags remain.
 9. Maintain the custom `x-quocker` namespace separately from Compose fields;
    version it and validate it just as strictly.
 

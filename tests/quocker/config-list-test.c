@@ -27,5 +27,7 @@ int main(int argc, char **argv) {
   assert_cli_output(cli, argv[1], "--images",
                     "alpine:latest\nregistry.example/alpha:latest\n"
                     "registry.example/zeta:latest\n");
+  assert_cli_output(cli, argv[1], "--volumes", "cache\ndata\n");
+  assert_cli_output(cli, argv[1], "--networks", "backend\nfrontend\n");
   return 0;
 }

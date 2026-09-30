@@ -1185,7 +1185,8 @@ static gboolean config_write_list(const YNode *config, const char *mode) {
       }
     }
     g_hash_table_destroy(seen);
-  } else {
+  } else if (g_strcmp0(mode, "services") == 0 ||
+             g_strcmp0(mode, "images") == 0) {
     for (guint i = 0; services && i < services->items->len; i++) {
       YPair *service_pair = g_ptr_array_index(services->items, i);
       const char *name = node_string(service_pair->key);
@@ -1193,6 +1194,15 @@ static gboolean config_write_list(const YNode *config, const char *mode) {
       const char *value = g_strcmp0(mode, "services") == 0 ? name : image;
       if (value && *value) {
         g_ptr_array_add(values, g_strdup(value));
+      }
+    }
+  } else {
+    YNode *resources = map_get(config, mode);
+    for (guint i = 0; resources && i < resources->items->len; i++) {
+      YPair *resource = g_ptr_array_index(resources->items, i);
+      const char *name = node_string(resource->key);
+      if (name && *name) {
+        g_ptr_array_add(values, g_strdup(name));
       }
     }
   }
@@ -5128,6 +5138,7 @@ static void usage(FILE *file) {
           "      --profile PROFILE       Enable a service profile\n\n"
           "  config --format yaml|json   Select config output format\n"
           "  config --services|--profiles|--images  List config entries\n"
+          "  config --volumes|--networks   List declared resources\n"
           "  config --environment        Print interpolation environment\n"
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
@@ -5249,7 +5260,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
                (g_str_equal(arg, "--environment") ||
                 g_str_equal(arg, "--services") ||
                 g_str_equal(arg, "--profiles") ||
-                g_str_equal(arg, "--images"))) {
+                g_str_equal(arg, "--images") ||
+                g_str_equal(arg, "--volumes") ||
+                g_str_equal(arg, "--networks"))) {
       const char *mode = arg + 2;
       if (opts->config_list_mode &&
           !g_str_equal(opts->config_list_mode, mode)) {

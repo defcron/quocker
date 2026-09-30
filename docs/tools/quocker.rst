@@ -61,9 +61,10 @@ names are lowercased and stripped to those characters. The resolved value is
 written to ``name`` in ``config`` output and exposed as
 ``COMPOSE_PROJECT_NAME`` during file interpolation.
 
-``config --services``, ``config --profiles``, and ``config --images`` print
-the corresponding names one per line in sorted order. Repeated profile names
-are emitted once. ``config --environment`` prints the merged process and
+``config --services``, ``config --profiles``, ``config --images``,
+``config --volumes``, and ``config --networks`` print the corresponding names
+one per line in sorted order. Repeated profile names are emitted once.
+``config --environment`` prints the merged process and
 environment-file values used for interpolation as sorted ``KEY=VALUE`` lines;
 process environment values take precedence over explicit env-file values.
 These output selection modes cannot be combined with ``--format``; without an
