@@ -440,6 +440,22 @@ static void test_gzip_layer_is_materialized(void) {
   g_free(expected_provenance);
   g_free(layer_digest);
   g_free(compressed);
+
+  struct stat compressed_stat;
+  g_assert_cmpint(g_stat(layer, &compressed_stat), ==, 0);
+  g_assert_cmpint(truncate(layer, compressed_stat.st_size - 4), ==, 0);
+  GPtrArray *damaged_layers = g_ptr_array_new();
+  g_ptr_array_add(damaged_layers, layer);
+  const char *damaged_digest =
+      "sha256:1414141414141414141414141414141414141414141414141414141414141414";
+  g_assert_false(
+      quocker_rootfs_materialize(damaged_digest, damaged_layers, cache, NULL));
+  char *damaged_rootfs = g_build_filename(cache, "rootfs",
+                                          damaged_digest + strlen("sha256:"),
+                                          NULL);
+  g_assert_false(g_file_test(damaged_rootfs, G_FILE_TEST_EXISTS));
+  g_free(damaged_rootfs);
+  g_ptr_array_free(damaged_layers, TRUE);
   guint64 removed = 0;
   g_assert_true(quocker_rootfs_cache_prune(cache, &removed));
   g_assert_cmpint(g_unlink(layer), ==, 0);

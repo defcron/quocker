@@ -184,7 +184,8 @@ static gboolean set_ownership_metadata_at(int parent_fd, const char *leaf,
 }
 
 static void rootfs_error(const char *message) {
-  g_printerr("quocker: OCI rootfs: %s\n", message);
+  g_printerr("quocker: OCI rootfs: %s\n",
+             message ? message : "archive reader rejected the layer");
 }
 
 static char *normalize_archive_path(const char *path) {

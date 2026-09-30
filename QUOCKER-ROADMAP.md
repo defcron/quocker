@@ -494,10 +494,11 @@ in user-facing compatibility promises.
    beside the manifest-addressed rootfs after cache-quota preflight. OCI `up`
    now invokes disk conversion when needed. Regressions reject path traversal,
    symlink-parent traversal, and hard-link target traversal, and materialize a
-   gzip-compressed layer. A `.provenance` sidecar records the selected manifest
-   digest and each materialization layer's SHA-256; cache reuse requires the
-   record to match the supplied layer files. Additional malformed archive and
-   compression fixtures remain open.
+   gzip-compressed layer and reject a truncated gzip archive without retaining
+   partial output. A `.provenance` sidecar records the selected manifest digest
+   and each materialization layer's SHA-256; cache reuse requires the record to
+   match the supplied layer files. Additional malformed archive and compression
+   fixtures remain open.
    Add broader malicious-archive and compression fixtures.
 5. **Partially implemented:** a C kernel catalog selector matches OS,
    architecture, and variant, prefers exact distro IDs over `ID_LIKE` family

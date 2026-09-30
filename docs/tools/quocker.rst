@@ -318,7 +318,8 @@ platform, verify manifest/config/layer digests, and safely materialize layer
 tar files into a rootfs directory under the content cache. The extractor
 applies OCI whiteouts, rejects path traversal and symlink-parent traversal,
 and enforces entry and expanded-size limits. It rejects path, symlink-parent,
-and hard-link target traversal, and supports gzip-compressed layers.
+and hard-link target traversal, supports gzip-compressed layers, and rejects a
+truncated gzip archive without leaving a partial rootfs.
 Character/block devices and FIFOs are stored as ordinary placeholder files
 with guest type/device metadata; sockets and unknown types are rejected. A
 ``.provenance`` sidecar records the selected manifest digest and SHA-256 digest
