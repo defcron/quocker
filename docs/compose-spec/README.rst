@@ -7,7 +7,9 @@ at commit ``914ec15d1fa498969c0df5c1d672306db3256089``. Its SHA-256 is
 The snapshot uses JSON Schema 2020-12 and is Quocker's active compatibility
 baseline. Quocker validates merged Compose files against it. Updates must pin
 a commit, record the new checksum, review schema changes, and update
-validation fixtures together.
+validation fixtures together. ``scripts/check-compose-spec.sh`` verifies that
+the vendored file matches the checksum recorded here; the fork-only CI job runs
+this check on every pipeline.
 
 The upstream schema is distributed under Apache License 2.0; see ``LICENSE``.
 

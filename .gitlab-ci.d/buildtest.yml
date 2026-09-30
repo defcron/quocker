@@ -18,6 +18,7 @@ quocker-test:
       libyaml-dev libcurl4-openssl-dev libjson-glib-dev libarchive-dev
       libssl-dev libext2fs-dev python3-sphinx python3-sphinx-rtd-theme
   script:
+    - ./scripts/check-compose-spec.sh
     - ./configure --target-list=x86_64-softmmu --enable-docs -Dquocker=enabled
     - >-
       ninja -C build

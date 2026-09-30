@@ -665,8 +665,9 @@ in user-facing compatibility promises.
    Ubuntu 24.04 with x86_64 system emulation, builds QEMU and Quocker with
    documentation enabled, and runs the Quocker test suite. It also configures
    a Clang build and runs Clang's core static analyzer checks over every
-   Quocker C source. Formatting, schema-drift checks, KVM/TCG coverage, and a
-   broader distribution and architecture matrix remain.
+   Quocker C source. CI also verifies the vendored Compose schema against its
+   pinned checksum. Formatting, KVM/TCG coverage, and a broader distribution
+   and architecture matrix remain.
 
 ### Phase 10 — Documentation, packaging, and stable-QEMU maintenance
 
