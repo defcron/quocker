@@ -1,41 +1,114 @@
 _quocker() {
-    local cur prev commands options
+    local cur prev command_index command
+    local commands global_options command_options
     COMPREPLY=()
     cur=${COMP_WORDS[COMP_CWORD]}
     prev=${COMP_WORDS[COMP_CWORD-1]}
+    commands='compose up start stop restart kill pause unpause down rm ps logs volume pull prune config port version kernel'
+    global_options='-h --help -f --file -p --project-name --project-directory --env-file --profile'
 
-    commands='up down ps logs config start stop restart kill pause unpause rm pull build create run exec cp port events top wait images ls version volume prune compose kernel'
-    options='-f --file -p --project-name --project-directory --env-file --profile --help --version --dry-run --short'
+    command_index=1
+    while (( command_index < COMP_CWORD )); do
+        case ${COMP_WORDS[command_index]} in
+            -f|--file|-p|--project-name|--project-directory|--env-file|--profile)
+                (( command_index += 2 ))
+                ;;
+            compose)
+                (( command_index++ ))
+                commands='up start stop restart kill pause unpause down rm ps logs volume pull prune config port version'
+                ;;
+            -*)
+                (( command_index++ ))
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
 
     case $prev in
-        -f|--file|--project-name|-p|--project-directory|--env-file|--profile)
-            return
-            ;;
-        -s|--signal)
-            COMPREPLY=( $(compgen -W 'HUP INT QUIT KILL TERM USR1 USR2' -- "$cur") )
+        -f|--file|-p|--project-name|--project-directory|--env-file|--profile)
             return
             ;;
     esac
 
-    if [[ $COMP_CWORD -eq 1 || ${COMP_WORDS[1]} == compose ]]; then
-        COMPREPLY=( $(compgen -W "$commands $options" -- "$cur") )
+    if (( COMP_CWORD <= command_index )); then
+        COMPREPLY=( $(compgen -W "$commands $global_options" -- "$cur") )
         return
     fi
 
-    case ${COMP_WORDS[1]} in
+    command=${COMP_WORDS[command_index]}
+    case $command in
         config)
-            COMPREPLY=( $(compgen -W '--format --environment --services --profiles --images --volumes --networks --quiet' -- "$cur") )
+            command_options='--format --environment --services --profiles --images --volumes --networks --quiet'
+            if [[ $prev == --format ]]; then
+                COMPREPLY=( $(compgen -W 'yaml json' -- "$cur") )
+                return
+            fi
+            ;;
+        up)
+            command_options='--dry-run -d'
+            ;;
+        start|stop|restart|pause|unpause|down)
+            command_options='--dry-run'
+            ;;
+        rm)
+            command_options='--volumes -v -f'
+            ;;
+        logs)
+            command_options='-f'
+            ;;
+        version)
+            command_options='--short'
+            ;;
+        prune)
+            command_options=''
+            ;;
+        kernel)
+            if (( COMP_CWORD == command_index + 1 )); then
+                COMPREPLY=( $(compgen -W 'select fetch update' -- "$cur") )
+                return
+            fi
+            case ${COMP_WORDS[command_index+1]} in
+                select|fetch)
+                    command_options='--platform --rootfs --pubkey --module-release --json'
+                    ;;
+                update)
+                    command_options='--url --catalog --pubkey'
+                    ;;
+            esac
             ;;
         kill)
-            COMPREPLY=( $(compgen -W '-s --signal' -- "$cur") )
+            command_options='--dry-run -s --signal'
+            if [[ $prev == -s || $prev == --signal ]]; then
+                COMPREPLY=( $(compgen -W 'HUP INT QUIT KILL TERM USR1 USR2 SIGHUP SIGINT SIGQUIT SIGKILL SIGTERM SIGUSR1 SIGUSR2' -- "$cur") )
+                return
+            fi
             ;;
-        down|rm|volume)
-            COMPREPLY=( $(compgen -W '--volumes --dry-run ls df inspect' -- "$cur") )
+        port)
+            command_options=''
+            ;;
+        volume)
+            if (( COMP_CWORD == command_index + 1 )); then
+                COMPREPLY=( $(compgen -W 'ls df inspect rm' -- "$cur") )
+                return
+            fi
+            if [[ ${COMP_WORDS[command_index+1]} == rm ]]; then
+                command_options='--dry-run'
+            else
+                command_options=''
+            fi
             ;;
         *)
-            COMPREPLY=( $(compgen -W "$options" -- "$cur") )
+            command_options=''
             ;;
     esac
+
+    if [[ $command == kernel ]]; then
+        COMPREPLY=( $(compgen -W "$command_options" -- "$cur") )
+    else
+        COMPREPLY=( $(compgen -W "$global_options $command_options" -- "$cur") )
+    fi
 }
 
 complete -F _quocker quocker

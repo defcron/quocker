@@ -107,8 +107,9 @@ has a meaningful VM equivalent.
   is wired, but no trusted production kernel catalog is provisioned here, so a
   complete boot smoke test and full Compose runtime compatibility remain open.
 - **Roadmap state:** Phase 0 has a confirmed VM-only boundary and an OCI-to-VM
-  design, with platform/kernel/init decisions still open. Phase 1 has a
-  working optional target but still needs packaging and CLI polish; Phase 2 is
+  design, with platform/kernel/init decisions still open. Phase 1 now installs
+  a Sphinx-generated man page and Bash completion with the optional target;
+  structured diagnostics and broader packaging polish remain. Phase 2 is
   a partial parser that validates merged YAML against the pinned Compose JSON
   Schema 2020-12 document. Its C validator implements the assertion keywords
   used by the pinned schema and refuses to run if the snapshot introduces an
