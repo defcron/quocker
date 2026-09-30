@@ -14,6 +14,7 @@ typedef struct QuockerVolumeInfo {
   char *logical_name;
   char *disk_path;
   guint64 size_bytes;
+  guint64 allocated_bytes;
 } QuockerVolumeInfo;
 
 void quocker_volume_info_free(QuockerVolumeInfo *info);
@@ -28,5 +29,10 @@ gboolean quocker_volume_list(const char *project_directory,
 
 gboolean quocker_volume_remove(const char *project_directory,
                                const char *logical_name, GError **error);
+
+gboolean quocker_volume_project_usage(const char *project_directory,
+                                      guint64 *virtual_bytes,
+                                      guint64 *allocated_bytes,
+                                      guint64 *quota_bytes, GError **error);
 
 #endif

@@ -472,8 +472,11 @@ in user-facing compatibility promises.
    refuses while a project service has a live or unverified PID. Richer
    ownership records, crash recovery, and safeguards against concurrent
    management commands remain to be implemented.
-4. Add explicit disk quotas and configurable retention/GC. Prevent invisible
-   unbounded cache growth; show per-project and per-image disk usage.
+4. **Partially implemented:** project-scoped volume disk quotas default to
+   20 GiB and are configurable with ``QUOCKER_VOLUME_QUOTA``; ``volume ls``
+   and ``volume df`` report virtual capacity and actual filesystem allocation.
+   Global cache quotas, per-image accounting, retention policies, and garbage
+   collection remain to be implemented.
 5. Handle backing-chain compaction, snapshots, consistency, concurrent access,
    locks, crash recovery, image migration, and safe deletion.
 6. Define encryption-at-rest and secret handling for base disks, overlays,

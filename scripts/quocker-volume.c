@@ -127,6 +127,70 @@ static gint volume_info_compare(gconstpointer left, gconstpointer right) {
   return g_strcmp0(a->logical_name, b->logical_name);
 }
 
+static gboolean parse_volume_quota(const char *value, guint64 *bytes_out) {
+  if (!value || !*value || !bytes_out) {
+    return FALSE;
+  }
+  char *end = NULL;
+  errno = 0;
+  const char *number = value;
+  while (g_ascii_isspace(*number)) {
+    number++;
+  }
+  if (*number == '-') {
+    return FALSE;
+  }
+  guint64 size = g_ascii_strtoull(value, &end, 10);
+  if (end == value || errno == ERANGE) {
+    return FALSE;
+  }
+  while (g_ascii_isspace(*end)) {
+    end++;
+  }
+  char *unit = g_ascii_strup(end, -1);
+  g_strstrip(unit);
+  guint64 multiplier = 1;
+  if (g_str_equal(unit, "") || g_str_equal(unit, "B")) {
+    multiplier = 1;
+  } else if (g_str_equal(unit, "K") || g_str_equal(unit, "KB") ||
+             g_str_equal(unit, "KIB")) {
+    multiplier = 1024;
+  } else if (g_str_equal(unit, "M") || g_str_equal(unit, "MB") ||
+             g_str_equal(unit, "MIB")) {
+    multiplier = 1024 * 1024;
+  } else if (g_str_equal(unit, "G") || g_str_equal(unit, "GB") ||
+             g_str_equal(unit, "GIB")) {
+    multiplier = 1024ULL * 1024 * 1024;
+  } else if (g_str_equal(unit, "T") || g_str_equal(unit, "TB") ||
+             g_str_equal(unit, "TIB")) {
+    multiplier = 1024ULL * 1024 * 1024 * 1024;
+  } else {
+    g_free(unit);
+    return FALSE;
+  }
+  g_free(unit);
+  if (size > G_MAXUINT64 / multiplier) {
+    return FALSE;
+  }
+  *bytes_out = size * multiplier;
+  return TRUE;
+}
+
+static gboolean configured_volume_quota(guint64 *quota_bytes, GError **error) {
+  const char *configured = g_getenv("QUOCKER_VOLUME_QUOTA");
+  if (!configured || !*configured) {
+    *quota_bytes = 20ULL * 1024 * 1024 * 1024;
+    return TRUE;
+  }
+  if (!parse_volume_quota(configured, quota_bytes)) {
+    volume_error(error,
+                 "QUOCKER_VOLUME_QUOTA must be an integer byte, KiB, MiB, "
+                 "GiB, or TiB size");
+    return FALSE;
+  }
+  return TRUE;
+}
+
 gboolean quocker_volume_list(const char *project_directory,
                              GPtrArray **volumes_out, GError **error) {
   if (error) {
@@ -192,6 +256,8 @@ gboolean quocker_volume_list(const char *project_directory,
     }
     info->disk_path = disk_path;
     info->size_bytes = (guint64)disk_stat.st_size;
+    info->allocated_bytes =
+        disk_stat.st_blocks > 0 ? (guint64)disk_stat.st_blocks * 512 : 0;
     g_ptr_array_add(volumes, info);
   }
   g_dir_close(directory);
@@ -199,6 +265,43 @@ gboolean quocker_volume_list(const char *project_directory,
   g_ptr_array_sort(volumes, volume_info_compare);
   *volumes_out = volumes;
   return TRUE;
+}
+
+gboolean quocker_volume_project_usage(const char *project_directory,
+                                      guint64 *virtual_bytes,
+                                      guint64 *allocated_bytes,
+                                      guint64 *quota_bytes, GError **error) {
+  if (error) {
+    *error = NULL;
+  }
+  if (!virtual_bytes || !allocated_bytes || !quota_bytes) {
+    volume_error(error, "volume usage output pointers are required");
+    return FALSE;
+  }
+  *virtual_bytes = 0;
+  *allocated_bytes = 0;
+  *quota_bytes = 0;
+  if (!configured_volume_quota(quota_bytes, error)) {
+    return FALSE;
+  }
+  GPtrArray *volumes = NULL;
+  if (!quocker_volume_list(project_directory, &volumes, error)) {
+    return FALSE;
+  }
+  gboolean valid = TRUE;
+  for (guint i = 0; i < volumes->len; i++) {
+    QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
+    if (G_MAXUINT64 - *virtual_bytes < info->size_bytes ||
+        G_MAXUINT64 - *allocated_bytes < info->allocated_bytes) {
+      volume_error(error, "project volume usage exceeds integer limits");
+      valid = FALSE;
+      break;
+    }
+    *virtual_bytes += info->size_bytes;
+    *allocated_bytes += info->allocated_bytes;
+  }
+  g_ptr_array_free(volumes, TRUE);
+  return valid;
 }
 
 gboolean quocker_volume_remove(const char *project_directory,
@@ -291,6 +394,25 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
     *disk_path_out = disk_path;
     g_free(volume_directory);
     return TRUE;
+  }
+  guint64 virtual_used = 0;
+  guint64 allocated_used = 0;
+  guint64 quota = 0;
+  if (!quocker_volume_project_usage(project_directory, &virtual_used,
+                                    &allocated_used, &quota, error)) {
+    g_free(disk_path);
+    g_free(volume_directory);
+    return FALSE;
+  }
+  if (quota && (virtual_used > quota || size_bytes > quota - virtual_used)) {
+    g_set_error(error, g_quark_from_static_string("quocker-volume-error"), 1,
+                "project volume quota exceeded (used %" G_GUINT64_FORMAT
+                " bytes, requested %" G_GUINT64_FORMAT
+                " bytes, quota %" G_GUINT64_FORMAT " bytes)",
+                virtual_used, size_bytes, quota);
+    g_free(disk_path);
+    g_free(volume_directory);
+    return FALSE;
   }
   char *temporary_path = g_strdup_printf("%s/.volume.XXXXXX", volume_directory);
   int fd = g_mkstemp(temporary_path);

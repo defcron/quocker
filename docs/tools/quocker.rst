@@ -170,7 +170,12 @@ anonymous disks unless the service explicitly mounts another volume at that
 target. ``ro`` mounts are mounted read-only inside the guest. Disks default to
 a sparse 1 GiB virtual size; ``QUOCKER_VOLUME_SIZE`` sets the size for newly
 created disks (for example, ``512MiB`` or ``2GiB``, from 64 MiB to 1 TiB).
-Existing disks retain their original size.
+Existing disks retain their original size. New project volume disks count
+toward a 20 GiB project quota by default; ``QUOCKER_VOLUME_QUOTA`` changes
+that limit and accepts byte, KiB, MiB, GiB, or TiB sizes. Set it to ``0`` for
+no limit. The quota counts virtual disk capacity, while ``volume ls`` and
+``volume df`` also report filesystem allocated bytes so sparse disk growth is
+visible. The quota is checked before each new disk is created.
 ``down`` preserves these disks; ``down --volumes`` removes project volume disks
 after all project VMs have stopped. Bind mounts, tmpfs, external volumes,
 non-local drivers, driver options, and long-form volume suboptions are
@@ -307,8 +312,10 @@ disk overlays. ``quocker logs [SERVICE]`` shows serial output, and
 their disks. ``quocker down --volumes`` stops services and removes their
 overlays and project volume disks. ``quocker volume ls`` lists persistent VM
 volumes for the current Compose project with their logical names and virtual
-sizes. ``quocker volume inspect NAME`` shows one volume's backing disk and
-size. ``quocker volume rm [--dry-run] NAME`` removes a volume from the current
+and allocated sizes. ``quocker volume df`` summarizes project virtual
+capacity, allocated disk space, and configured quota. ``quocker volume inspect
+NAME`` shows one volume's backing disk and size. ``quocker volume rm
+[--dry-run] NAME`` removes a volume from the current
 project; it refuses while a project service has a live or unverified PID.
 ``quocker pull`` downloads OCI manifests/config/layer blobs and
 materializes rootfs data and a raw ext4 guest disk in

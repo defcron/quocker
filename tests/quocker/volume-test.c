@@ -35,6 +35,7 @@ static gchar *run_volume_command(const char *cli, const char *project,
 
 int main(void) {
   GError *error = NULL;
+  g_setenv("QUOCKER_VOLUME_QUOTA", "128MiB", TRUE);
   char *directory = g_dir_make_tmp("quocker-volume-test-XXXXXX", &error);
   g_assert_no_error(error);
   char *first = NULL;
@@ -53,6 +54,27 @@ int main(void) {
   g_assert_cmpstr(info->logical_name, ==, "project:data");
   g_assert_cmpuint(info->size_bytes, ==, 64 * 1024 * 1024);
   g_ptr_array_free(volumes, TRUE);
+  guint64 virtual_bytes = 0;
+  guint64 allocated_bytes = 0;
+  guint64 quota_bytes = 0;
+  g_assert_true(quocker_volume_project_usage(
+      directory, &virtual_bytes, &allocated_bytes, &quota_bytes, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(virtual_bytes, ==, 64 * 1024 * 1024);
+  g_assert_cmpuint(allocated_bytes, >, 0);
+  g_assert_cmpuint(quota_bytes, ==, 128 * 1024 * 1024);
+  char *over_quota = NULL;
+  g_assert_false(quocker_volume_disk_prepare(
+      directory, "project:extra", 128 * 1024 * 1024, &over_quota, &error));
+  g_assert_error(error, g_quark_from_static_string("quocker-volume-error"), 1);
+  g_assert_nonnull(strstr(error->message, "quota exceeded"));
+  g_clear_error(&error);
+  g_setenv("QUOCKER_VOLUME_QUOTA", " -1GiB", TRUE);
+  g_assert_false(quocker_volume_project_usage(
+      directory, &virtual_bytes, &allocated_bytes, &quota_bytes, &error));
+  g_assert_error(error, g_quark_from_static_string("quocker-volume-error"), 1);
+  g_clear_error(&error);
+  g_setenv("QUOCKER_VOLUME_QUOTA", "128MiB", TRUE);
   char *second = NULL;
   g_assert_true(quocker_volume_disk_prepare(
       directory, "project:data", 128 * 1024 * 1024, &second, &error));
@@ -111,6 +133,21 @@ int main(void) {
     g_assert_no_error(error);
     g_assert_nonnull(strstr(stdout_text, "project:data"));
     g_assert_nonnull(strstr(stdout_text, "64"));
+    g_assert_nonnull(strstr(stdout_text, "USED"));
+    g_free(stdout_text);
+    char *df_arguments[] = {(char *)cli,       (char *)"--project-directory",
+                            project,           (char *)"--project-name",
+                            (char *)"project", (char *)"-f",
+                            compose,           (char *)"volume",
+                            (char *)"df",      NULL};
+    g_assert_true(g_spawn_sync(NULL, df_arguments, NULL, G_SPAWN_DEFAULT, NULL,
+                               NULL, &stdout_text, &stderr_text, &status,
+                               &error));
+    g_assert_no_error(error);
+    g_assert_true(g_spawn_check_wait_status(status, &error));
+    g_assert_no_error(error);
+    g_assert_nonnull(strstr(stdout_text, "VIRTUAL\tUSED\tQUOTA"));
+    g_assert_nonnull(strstr(stdout_text, "128"));
     g_free(stdout_text);
     g_free(stderr_text);
     char *metadata = g_strconcat(disk, ".name", NULL);

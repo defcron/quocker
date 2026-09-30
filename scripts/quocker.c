@@ -5567,7 +5567,7 @@ static void usage(FILE *file) {
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
-          "rm, ps, logs, volume ls|inspect|rm, "
+          "rm, ps, logs, volume ls|df|inspect|rm, "
           "pull, prune, config, port\n"
           "  kill: -s SIGNAL             Signal to send (default SIGKILL)\n"
           "Kernel tools: quocker kernel select|fetch --platform OS/ARCH "
@@ -5753,16 +5753,20 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     const char *action = g_ptr_array_index(opts->services, 0);
     gboolean valid_action =
         g_str_equal(action, "ls") || g_str_equal(action, "list") ||
-        g_str_equal(action, "inspect") || g_str_equal(action, "rm");
+        g_str_equal(action, "inspect") || g_str_equal(action, "rm") ||
+        g_str_equal(action, "df");
     guint expected_arguments =
-        g_str_equal(action, "ls") || g_str_equal(action, "list") ? 1 : 2;
+        g_str_equal(action, "ls") || g_str_equal(action, "list") ||
+                g_str_equal(action, "df")
+            ? 1
+            : 2;
     if (!valid_action || opts->services->len != expected_arguments ||
         (opts->dry_run && !g_str_equal(action, "rm"))) {
-      fail("usage: quocker volume ls|inspect NAME|rm [--dry-run] NAME");
+      fail("usage: quocker volume ls|df|inspect NAME|rm [--dry-run] NAME");
       return FALSE;
     }
   } else if (g_str_equal(opts->command, "volume")) {
-    fail("usage: quocker volume ls|inspect NAME|rm [--dry-run] NAME");
+    fail("usage: quocker volume ls|df|inspect NAME|rm [--dry-run] NAME");
     return FALSE;
   }
   return TRUE;
@@ -6133,14 +6137,45 @@ static gboolean volume_command(const char *action, const char *name,
     return FALSE;
   }
   if (g_str_equal(action, "ls") || g_str_equal(action, "list")) {
-    g_print("NAME\tSIZE\n");
+    g_print("NAME\tSIZE\tUSED\n");
     for (guint i = 0; i < volumes->len; i++) {
       QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
       char *size =
           g_format_size_full(info->size_bytes, G_FORMAT_SIZE_IEC_UNITS);
-      g_print("%s\t%s\n", info->logical_name, size);
+      char *used =
+          g_format_size_full(info->allocated_bytes, G_FORMAT_SIZE_IEC_UNITS);
+      g_print("%s\t%s\t%s\n", info->logical_name, size, used);
       g_free(size);
+      g_free(used);
     }
+    g_ptr_array_free(volumes, TRUE);
+    return TRUE;
+  }
+  if (g_str_equal(action, "df")) {
+    guint64 virtual_bytes = 0;
+    guint64 allocated_bytes = 0;
+    guint64 quota_bytes = 0;
+    if (!quocker_volume_project_usage(directory, &virtual_bytes,
+                                      &allocated_bytes, &quota_bytes, &error)) {
+      fail("cannot read project volume usage: %s",
+           error ? error->message : "unknown volume error");
+      g_clear_error(&error);
+      g_ptr_array_free(volumes, TRUE);
+      return FALSE;
+    }
+    char *virtual_size =
+        g_format_size_full(virtual_bytes, G_FORMAT_SIZE_IEC_UNITS);
+    char *actual_size =
+        g_format_size_full(allocated_bytes, G_FORMAT_SIZE_IEC_UNITS);
+    char *quota_size = quota_bytes
+                           ? g_format_size_full(quota_bytes,
+                                                G_FORMAT_SIZE_IEC_UNITS)
+                           : g_strdup("unlimited");
+    g_print("PROJECT\tVIRTUAL\tUSED\tQUOTA\n%s\t%s\t%s\t%s\n", project,
+            virtual_size, actual_size, quota_size);
+    g_free(virtual_size);
+    g_free(actual_size);
+    g_free(quota_size);
     g_ptr_array_free(volumes, TRUE);
     return TRUE;
   }
