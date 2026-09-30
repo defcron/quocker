@@ -63,8 +63,11 @@ written to ``name`` in ``config`` output and exposed as
 
 ``config --services``, ``config --profiles``, and ``config --images`` print
 the corresponding names one per line in sorted order. Repeated profile names
-are emitted once. These listing modes cannot be combined with ``--format``;
-without a listing option, ``config`` renders YAML by default or JSON with
+are emitted once. ``config --environment`` prints the merged process and
+environment-file values used for interpolation as sorted ``KEY=VALUE`` lines;
+process environment values take precedence over explicit env-file values.
+These output selection modes cannot be combined with ``--format``; without an
+output selection option, ``config`` renders YAML by default or JSON with
 ``--format json``.
 
 .. code-block:: yaml

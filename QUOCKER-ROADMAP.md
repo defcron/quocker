@@ -220,7 +220,7 @@ process/state recovery, cleanup, and packaging need more coverage and review.
 OCI service ``env_file`` now supports ordered path lists, interpolation,
 optional long-form files, raw format, and service-environment precedence in C;
 explicit unresolved environment entries remove image defaults. The Quocker
-suite contains 51 tests: 30 pass, 21 produce expected failures,
+suite contains 52 tests: 31 pass, 21 produce expected failures,
 and none fail unexpectedly. It includes JSON config serialization, static and
 dynamic port queries, plus a fake-QEMU lifecycle integration
 test covering stop, start, down, pause, unpause, kill, state preservation, and
@@ -327,9 +327,9 @@ in user-facing compatibility promises.
    strict versus permissive handling and unsupported-field reporting remain.
 8. **Partially implemented:** profiles and project-name resolution work for
    service selection and interpolation. `config` emits YAML or JSON and lists
-   sorted services, profiles, or images. Schema-aware normalization, image
-   resolution, environment/path output modes, and the remaining Docker Compose
-   config flags remain.
+   sorted services, profiles, or images, and prints the interpolation
+   environment. Schema-aware normalization, image resolution, path output
+   modes, and the remaining Docker Compose config flags remain.
 9. Maintain the custom `x-quocker` namespace separately from Compose fields;
    version it and validate it just as strictly.
 

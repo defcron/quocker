@@ -120,6 +120,16 @@ if not get_option('quocker').disabled()
          args: ['-f', files('../tests/quocker/config-list.yaml'), 'config',
                 '--services', '--format', 'yaml'],
          should_fail: true, suite: ['quocker'])
+    quocker_config_environment_test = executable(
+      'quocker-config-environment-test',
+      files('../tests/quocker/config-environment-test.c'),
+      dependencies: [glib])
+    test('quocker-config-environment', quocker_config_environment_test,
+         args: [files('../tests/quocker/config-list.yaml'),
+                files('../tests/quocker/config-environment.env')],
+         env: ['QUOCKER_CLI=' + quocker.full_path(),
+               'QUOCKER_TEST_OVERRIDE=from-process'],
+         depends: [quocker], suite: ['quocker'])
     test('quocker-config-env-file-list', quocker,
          args: ['config', '--quiet'],
          env: ['COMPOSE_FILE=../tests/quocker/base.yaml|../tests/quocker/override.yaml',

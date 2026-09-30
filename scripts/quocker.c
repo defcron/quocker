@@ -1204,6 +1204,24 @@ static gboolean config_write_list(const YNode *config, const char *mode) {
   return TRUE;
 }
 
+static gboolean config_write_environment(GHashTable *environment) {
+  GPtrArray *values = g_ptr_array_new_with_free_func(g_free);
+  GHashTableIter iterator;
+  gpointer key;
+  gpointer value;
+  g_hash_table_iter_init(&iterator, environment);
+  while (g_hash_table_iter_next(&iterator, &key, &value)) {
+    g_ptr_array_add(values, g_strdup_printf("%s=%s", (const char *)key,
+                                            value ? (const char *)value : ""));
+  }
+  g_ptr_array_sort(values, compare_string_pointers);
+  for (guint i = 0; i < values->len; i++) {
+    g_print("%s\n", (char *)g_ptr_array_index(values, i));
+  }
+  g_ptr_array_free(values, TRUE);
+  return TRUE;
+}
+
 static char *absolute_path(const char *path, const char *base) {
   if (g_path_is_absolute(path)) {
     return g_canonicalize_filename(path, NULL);
@@ -5110,7 +5128,9 @@ static void usage(FILE *file) {
           "      --profile PROFILE       Enable a service profile\n\n"
           "  config --format yaml|json   Select config output format\n"
           "  config --services|--profiles|--images  List config entries\n"
-          "      --dry-run              Print the dependency-ordered lifecycle plan\n\n"
+          "  config --environment        Print interpolation environment\n"
+          "      --dry-run              Print the dependency-ordered lifecycle "
+          "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
           "rm, ps, logs, "
           "pull, prune, config, port\n"
@@ -5125,11 +5145,12 @@ static gboolean parse_signal_number(const char *text, int *signal_out) {
   static const struct {
     const char *name;
     int number;
-  } signals[] = {{"HUP", SIGHUP},     {"INT", SIGINT},     {"QUIT", SIGQUIT},
-                 {"KILL", SIGKILL},   {"TERM", SIGTERM},   {"USR1", SIGUSR1},
-                 {"USR2", SIGUSR2},   {"SIGHUP", SIGHUP},  {"SIGINT", SIGINT},
-                 {"SIGQUIT", SIGQUIT},{"SIGKILL", SIGKILL}, {"SIGTERM", SIGTERM},
-                 {"SIGUSR1", SIGUSR1},{"SIGUSR2", SIGUSR2}, {NULL, 0}};
+  } signals[] = {
+      {"HUP", SIGHUP},      {"INT", SIGINT},      {"QUIT", SIGQUIT},
+      {"KILL", SIGKILL},    {"TERM", SIGTERM},    {"USR1", SIGUSR1},
+      {"USR2", SIGUSR2},    {"SIGHUP", SIGHUP},   {"SIGINT", SIGINT},
+      {"SIGQUIT", SIGQUIT}, {"SIGKILL", SIGKILL}, {"SIGTERM", SIGTERM},
+      {"SIGUSR1", SIGUSR1}, {"SIGUSR2", SIGUSR2}, {NULL, 0}};
   for (guint i = 0; signals[i].name; i++) {
     if (g_ascii_strcasecmp(text, signals[i].name) == 0) {
       *signal_out = signals[i].number;
@@ -5225,13 +5246,14 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(arg, "--quiet")) {
       opts->quiet = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "config") &&
-               (g_str_equal(arg, "--services") ||
+               (g_str_equal(arg, "--environment") ||
+                g_str_equal(arg, "--services") ||
                 g_str_equal(arg, "--profiles") ||
                 g_str_equal(arg, "--images"))) {
       const char *mode = arg + 2;
       if (opts->config_list_mode &&
           !g_str_equal(opts->config_list_mode, mode)) {
-        fail("config list output options are mutually exclusive");
+        fail("config output selection options are mutually exclusive");
         return FALSE;
       }
       g_free(opts->config_list_mode);
@@ -5281,7 +5303,7 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     return FALSE;
   }
   if (opts->config_list_mode && opts->config_format) {
-    fail("config list output cannot be combined with --format");
+    fail("config output selection cannot be combined with --format");
     return FALSE;
   }
   if (g_str_equal(opts->command, "port") &&
@@ -5665,7 +5687,9 @@ int main(int argc, char **argv) {
   if (g_str_equal(opts.command, "config")) {
     ok = opts.quiet ||
          (opts.config_list_mode
-              ? config_write_list(config, opts.config_list_mode)
+              ? (g_str_equal(opts.config_list_mode, "environment")
+                     ? config_write_environment(project_environment)
+                     : config_write_list(config, opts.config_list_mode))
               : (g_strcmp0(opts.config_format, "json") == 0
                      ? json_write_stdout(config)
                      : yaml_write_stdout(config)));
