@@ -123,7 +123,10 @@ has a meaningful VM equivalent.
   crash recovery, and most command compatibility remain open. New state files
   record Linux process start-time ticks; stop/status compare the recorded value
   before signaling or reporting a VM process, with a regression proving a
-  mismatched/recycled PID is left untouched. Signals bind to pidfds where the
+  mismatched/recycled PID is left untouched. New VM state is written to a
+  private temporary file, fsynced, atomically renamed, and directory-synced
+  before `up` reports success; the next lifecycle operation removes abandoned
+  state-write temporary files under the project lock. Signals bind to pidfds where the
   host kernel supports them; older kernels fall back to immediate identity
   revalidation. Older state without start-time metadata remains readable but
   has only the VM-name process check. QEMU now exposes a private

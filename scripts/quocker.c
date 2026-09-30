@@ -2284,6 +2284,88 @@ static char *state_path(const char *directory, const char *service) {
   return g_strdup_printf("%s/%s.state", directory, service);
 }
 
+static int signal_process(pid_t pid, const char *project, const char *service,
+                          guint64 expected_start_time, int signal_number);
+
+static gboolean state_write_atomic(const char *directory, const char *service,
+                                   const char *contents) {
+  char *path = state_path(directory, service);
+  char *temporary_path = g_strdup_printf("%s/.%s.state.tmp.XXXXXX", directory,
+                                         service);
+  int fd = g_mkstemp(temporary_path);
+  gboolean ok = fd >= 0 && fchmod(fd, 0600) == 0;
+  gsize length = strlen(contents);
+  gsize offset = 0;
+  while (ok && offset < length) {
+    ssize_t written = write(fd, contents + offset, length - offset);
+    if (written < 0 && errno == EINTR) {
+      continue;
+    }
+    if (written <= 0) {
+      ok = FALSE;
+      break;
+    }
+    offset += (gsize)written;
+  }
+  if (ok) {
+    ok = fsync(fd) == 0;
+  }
+  if (fd >= 0) {
+    ok = close(fd) == 0 && ok;
+  }
+  if (ok) {
+    ok = g_rename(temporary_path, path) == 0;
+  }
+  if (ok) {
+    int directory_fd = open(directory, O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+    ok = directory_fd >= 0;
+    if (ok) {
+      ok = fsync(directory_fd) == 0;
+      close(directory_fd);
+    }
+  }
+  if (!ok) {
+    g_unlink(temporary_path);
+  }
+  g_free(temporary_path);
+  g_free(path);
+  return ok;
+}
+
+static gboolean state_recover_temporary(const char *directory) {
+  GDir *dir = g_dir_open(directory, 0, NULL);
+  if (!dir) {
+    return FALSE;
+  }
+  gboolean ok = TRUE;
+  gboolean changed = FALSE;
+  const char *entry;
+  while (ok && (entry = g_dir_read_name(dir))) {
+    if (!g_str_has_prefix(entry, ".") || !strstr(entry, ".state.tmp.")) {
+      continue;
+    }
+    char *path = g_build_filename(directory, entry, NULL);
+    struct stat st;
+    if (g_lstat(path, &st) < 0 || !S_ISREG(st.st_mode) ||
+        st.st_uid != geteuid() || (st.st_mode & 0077) || g_unlink(path) < 0) {
+      ok = FALSE;
+    } else {
+      changed = TRUE;
+    }
+    g_free(path);
+  }
+  g_dir_close(dir);
+  if (ok && changed) {
+    int fd = open(directory, O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+    ok = fd >= 0;
+    if (ok) {
+      ok = fsync(fd) == 0;
+      close(fd);
+    }
+  }
+  return ok;
+}
+
 static char *state_disk_basename(const char *directory, const char *service) {
   char *path = state_path(directory, service);
   gchar *contents = NULL;
@@ -3460,22 +3542,32 @@ static gboolean run_qemu_service(const char *project, const char *root,
     goto error;
   }
   g_strchomp(pid_contents);
-  char *state = state_path(directory, name);
   char *qname_state = g_strdup_printf("%s-%s", project, name);
   pid_t qemu_pid = (pid_t)g_ascii_strtoll(pid_contents, NULL, 10);
   guint64 qemu_start_time = process_start_time(qemu_pid);
   char *state_contents =
       g_strdup_printf("%s\n%s\n%s\n%" G_GUINT64_FORMAT "\n", pid_contents,
                       qname_state, disk_basename, qemu_start_time);
-  gboolean saved = g_file_set_contents(state, state_contents, -1, NULL);
+  gboolean saved = state_write_atomic(directory, name, state_contents);
   if (saved) {
-    g_print("[%s] %s: started (pid %s)", project, name, pid_contents);
+    g_print("[%s] %s: started (pid %s)\n", project, name, pid_contents);
+  } else {
+    fail("service '%s': QEMU started but durable VM state could not be saved",
+         name);
+    signal_process(qemu_pid, project, name, qemu_start_time, SIGTERM);
+    for (guint i = 0; i < 100 && process_running(qemu_pid, project, name,
+                                                  qemu_start_time);
+         i++) {
+      g_usleep(100000);
+    }
+    if (process_running(qemu_pid, project, name, qemu_start_time)) {
+      signal_process(qemu_pid, project, name, qemu_start_time, SIGKILL);
+    }
   }
   g_free(state_contents);
   g_free(qname_state);
   g_free(disk_basename);
   g_free(boot_arguments);
-  g_free(state);
   g_free(pid_contents);
   g_free(log);
   g_free(pidfile);
@@ -6319,6 +6411,13 @@ int main(int argc, char **argv) {
   if (lifecycle_operation && !opts.dry_run) {
     lifecycle_lock_fd = project_operation_lock(directory);
     if (lifecycle_lock_fd < 0) {
+      return 1;
+    }
+    if (!state_recover_temporary(directory)) {
+      fail("could not recover interrupted VM state writes safely");
+      flock(lifecycle_lock_fd, LOCK_UN);
+      close(lifecycle_lock_fd);
+      g_free(directory);
       return 1;
     }
   }

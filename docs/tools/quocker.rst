@@ -354,6 +354,10 @@ that VM's QEMU process. Signals use Linux pidfds when available, binding the
 signal to the verified process even if its PID is later reused. On kernels
 without pidfd support, Quocker rechecks process identity immediately before
 signaling.
+VM state records are written through a private temporary file, flushed, and
+atomically renamed before Quocker reports a successful start. State mutations
+remove abandoned private state-write temporary files while holding the
+project lifecycle lock.
 Use
 ``QUOCKER_REGISTRY_MIRROR=https://mirror.example`` to route all registry
 requests through one HTTPS mirror, or use ``registries.json`` to route each

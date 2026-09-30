@@ -136,6 +136,11 @@ static void test_stop_preserves_vm_state(void) {
   char *state_path = g_build_filename(state_directory, "app.state", NULL);
   char *pidfile = g_build_filename(state_directory, "app.pid", NULL);
   char *qmp_socket = g_build_filename(state_directory, "app.qmp", NULL);
+  char *stale_state =
+      g_build_filename(state_directory, ".app.state.tmp.crash01", NULL);
+  g_assert_true(g_file_set_contents(stale_state, "partial", -1, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(g_chmod(stale_state, 0600), ==, 0);
   char *state = g_strdup_printf("%d\nlifecycle-app\napp.qcow2\n", (int)child);
   g_assert_true(g_file_set_contents(state_path, state, -1, &error));
   g_assert_no_error(error);
@@ -149,6 +154,7 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_true(run_cli(cli, directory, compose, "stop", &output));
   g_assert_nonnull(strstr(output, "app: stopped"));
   g_free(output);
+  g_assert_false(g_file_test(stale_state, G_FILE_TEST_EXISTS));
   int child_status = 0;
   g_assert_cmpint(waitpid(child, &child_status, 0), ==, child);
   g_assert_true(WIFEXITED(child_status));
@@ -160,6 +166,9 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_true(run_cli(cli, directory, compose, "start", &output));
   g_assert_nonnull(strstr(output, "app: started"));
   g_free(output);
+  struct stat state_stat;
+  g_assert_cmpint(g_stat(state_path, &state_stat), ==, 0);
+  g_assert_cmpint(state_stat.st_mode & 0777, ==, 0600);
   assert_dynamic_port(cli, directory, compose);
   gchar *started_state = NULL;
   g_assert_true(g_file_get_contents(state_path, &started_state, NULL, &error));
@@ -254,6 +263,7 @@ static void test_stop_preserves_vm_state(void) {
   g_free(state_path);
   g_free(pidfile);
   g_free(qmp_socket);
+  g_free(stale_state);
   g_free(overlay_sidecar);
   g_free(overlay_disk);
   g_free(base_disk);
