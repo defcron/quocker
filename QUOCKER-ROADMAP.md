@@ -93,7 +93,8 @@ has a meaningful VM equivalent.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
   ownership and extended-attribute metadata, traversal and symlink-parent
-  rejection, inert device placeholders, pruning, and the cache-limit
+  rejection, hard-link target traversal rejection, gzip-compressed layer
+  materialization, inert device placeholders, pruning, and the cache-limit
   completion-marker regression. Eight rootfs cases include OS-release
   confinement, the standard usr/lib symlink, embedded-NUL rejection, and
   module-release detection. Five kernel-catalog cases cover signed catalogs,
@@ -489,8 +490,10 @@ in user-facing compatibility promises.
    host device nodes. The converter maps staged character/block devices and
    FIFOs to ext4 special inodes, and `pull` stores the converted guest disk
    beside the manifest-addressed rootfs after cache-quota preflight. OCI `up`
-   now invokes disk conversion when needed. Broader malicious-archive and
-   compression fixtures, plus rootfs provenance, remain open.
+   now invokes disk conversion when needed. Regressions reject path traversal,
+   symlink-parent traversal, and hard-link target traversal, and materialize a
+   gzip-compressed layer. Additional malformed archive/compression fixtures and
+   rootfs provenance metadata remain open.
    Add broader malicious-archive and compression fixtures, and preserve rootfs
    provenance in metadata.
 5. **Partially implemented:** a C kernel catalog selector matches OS,

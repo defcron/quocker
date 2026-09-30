@@ -15,11 +15,17 @@
 #include <sys/xattr.h>
 #include <unistd.h>
 
-static gboolean write_layer(const char *path, const char *const *names,
-                            const char *const *contents, const mode_t *types,
-                            guint count) {
+static gboolean write_layer_filtered(const char *path,
+                                     const char *const *names,
+                                     const char *const *contents,
+                                     const mode_t *types, guint count,
+                                     gboolean gzip) {
   struct archive *writer = archive_write_new();
   archive_write_set_format_pax_restricted(writer);
+  if (gzip && archive_write_add_filter_gzip(writer) != ARCHIVE_OK) {
+    archive_write_free(writer);
+    return FALSE;
+  }
   if (archive_write_open_filename(writer, path) != ARCHIVE_OK) {
     archive_write_free(writer);
     return FALSE;
@@ -46,6 +52,33 @@ static gboolean write_layer(const char *path, const char *const *names,
       break;
     }
   }
+  if (archive_write_close(writer) != ARCHIVE_OK) {
+    ok = FALSE;
+  }
+  archive_write_free(writer);
+  return ok;
+}
+
+static gboolean write_layer(const char *path, const char *const *names,
+                            const char *const *contents, const mode_t *types,
+                            guint count) {
+  return write_layer_filtered(path, names, contents, types, count, FALSE);
+}
+
+static gboolean write_hardlink_traversal_layer(const char *path) {
+  struct archive *writer = archive_write_new();
+  archive_write_set_format_pax_restricted(writer);
+  if (archive_write_open_filename(writer, path) != ARCHIVE_OK) {
+    archive_write_free(writer);
+    return FALSE;
+  }
+  struct archive_entry *entry = archive_entry_new();
+  archive_entry_set_pathname(entry, "escape-link");
+  archive_entry_set_filetype(entry, AE_IFREG);
+  archive_entry_set_perm(entry, 0644);
+  archive_entry_set_hardlink(entry, "../../outside");
+  gboolean ok = archive_write_header(writer, entry) == ARCHIVE_OK;
+  archive_entry_free(entry);
   if (archive_write_close(writer) != ARCHIVE_OK) {
     ok = FALSE;
   }
@@ -335,6 +368,57 @@ static void test_symlink_parent_is_rejected(void) {
   g_free(cache);
 }
 
+static void test_hardlink_target_traversal_is_rejected(void) {
+  char *cache = new_cache_directory();
+  char *layer = g_build_filename(cache, "hardlink-traversal.tar", NULL);
+  g_assert_true(write_hardlink_traversal_layer(layer));
+  GPtrArray *layers = g_ptr_array_new();
+  g_ptr_array_add(layers, layer);
+  const char *digest =
+      "sha256:1212121212121212121212121212121212121212121212121212121212121212";
+  g_assert_false(quocker_rootfs_materialize(digest, layers, cache, NULL));
+  char *escaped = g_build_filename(cache, "outside", NULL);
+  g_assert_false(g_file_test(escaped, G_FILE_TEST_EXISTS));
+  g_free(escaped);
+  guint64 removed = 0;
+  g_assert_true(quocker_rootfs_cache_prune(cache, &removed));
+  g_assert_cmpint(g_unlink(layer), ==, 0);
+  g_assert_cmpint(g_rmdir(cache), ==, 0);
+  g_ptr_array_free(layers, TRUE);
+  g_free(layer);
+  g_free(cache);
+}
+
+static void test_gzip_layer_is_materialized(void) {
+  char *cache = new_cache_directory();
+  char *layer = g_build_filename(cache, "compressed.tar.gz", NULL);
+  const char *names[] = {"compressed/payload"};
+  const char *contents[] = {"gzip layer content"};
+  mode_t types[] = {AE_IFREG};
+  g_assert_true(write_layer_filtered(layer, names, contents, types,
+                                     G_N_ELEMENTS(names), TRUE));
+  GPtrArray *layers = g_ptr_array_new();
+  g_ptr_array_add(layers, layer);
+  const char *digest =
+      "sha256:1313131313131313131313131313131313131313131313131313131313131313";
+  char *rootfs = NULL;
+  g_assert_true(quocker_rootfs_materialize(digest, layers, cache, &rootfs));
+  char *payload = g_build_filename(rootfs, "compressed", "payload", NULL);
+  char *actual = NULL;
+  g_assert_true(g_file_get_contents(payload, &actual, NULL, NULL));
+  g_assert_cmpstr(actual, ==, contents[0]);
+  g_free(actual);
+  guint64 removed = 0;
+  g_assert_true(quocker_rootfs_cache_prune(cache, &removed));
+  g_assert_cmpint(g_unlink(layer), ==, 0);
+  g_assert_cmpint(g_rmdir(cache), ==, 0);
+  g_ptr_array_free(layers, TRUE);
+  g_free(payload);
+  g_free(rootfs);
+  g_free(layer);
+  g_free(cache);
+}
+
 static void test_completion_marker_obeys_cache_limit(void) {
   char *cache = new_cache_directory();
   char *layer = g_build_filename(cache, "marker.tar", NULL);
@@ -590,6 +674,10 @@ int main(int argc, char **argv) {
   g_test_add_func("/quocker/rootfs/path-traversal", test_traversal_is_rejected);
   g_test_add_func("/quocker/rootfs/symlink-parent",
                   test_symlink_parent_is_rejected);
+  g_test_add_func("/quocker/rootfs/hardlink-target-traversal",
+                  test_hardlink_target_traversal_is_rejected);
+  g_test_add_func("/quocker/rootfs/gzip-layer",
+                  test_gzip_layer_is_materialized);
   g_test_add_func("/quocker/rootfs/marker-cache-limit",
                   test_completion_marker_obeys_cache_limit);
   g_test_add_func("/quocker/rootfs/cache-accounting-fails-closed",
