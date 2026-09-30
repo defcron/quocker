@@ -245,7 +245,25 @@ int main(void) {
     g_assert_nonnull(strstr(stdout_text, "project:data"));
     g_assert_nonnull(strstr(stdout_text, "64"));
     g_assert_nonnull(strstr(stdout_text, "USED"));
+    char *volume_listing = g_strdup(stdout_text);
     g_free(stdout_text);
+    g_free(stderr_text);
+    stderr_text = NULL;
+    char *compose_volumes_arguments[] = {
+        (char *)cli,       (char *)"--project-directory", project,
+        (char *)"--project-name", (char *)"project", (char *)"-f",
+        compose,           (char *)"volumes",           NULL};
+    g_assert_true(g_spawn_sync(NULL, compose_volumes_arguments, NULL,
+                               G_SPAWN_DEFAULT, NULL, NULL, &stdout_text,
+                               &stderr_text, &status, &error));
+    g_assert_no_error(error);
+    g_assert_true(g_spawn_check_wait_status(status, &error));
+    g_assert_no_error(error);
+    g_assert_cmpstr(stdout_text, ==, volume_listing);
+    g_free(stdout_text);
+    g_free(volume_listing);
+    g_free(stderr_text);
+    stderr_text = NULL;
     char *df_arguments[] = {(char *)cli,       (char *)"--project-directory",
                             project,           (char *)"--project-name",
                             (char *)"project", (char *)"-f",

@@ -91,9 +91,9 @@ treated as successful.
      - Implemented
      - Reports the Quocker interface and its QEMU base version.
    * - ``volumes``
-     - Not Compose-compatible
-     - Quocker currently provides ``quocker volume ls|df|inspect|rm`` instead;
-       the Compose ``volumes`` verb is not an alias.
+     - VM-adapted, partial
+     - Lists project-scoped persistent VM volumes with disk sizes, matching
+       ``quocker volume ls``. Bind and tmpfs mounts are not included.
    * - ``build``, ``commit``, ``push``, ``publish``
      - Not implemented
      - Image build and publication need an explicitly defined VM artifact
@@ -467,6 +467,8 @@ capacity, allocated disk space, and configured quota. ``quocker volume inspect
 NAME`` shows one volume's backing disk and size. ``quocker volume rm
 [--dry-run] NAME`` removes a volume from the current
 project; it refuses while a project service has a live or unverified PID.
+``quocker volumes`` is a Compose-shaped alias for ``quocker volume ls``; it
+lists persistent project VM disks and does not list bind or tmpfs mounts.
 ``quocker images [SERVICE...]`` lists each selected service's configured image
 reference and whether saved VM state is running, stopped, or not yet created.
 This command reads project state without creating a state directory; it does

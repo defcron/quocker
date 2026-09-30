@@ -6749,7 +6749,7 @@ static void usage(FILE *file) {
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
-          "rm, ps, images, logs, wait, volume ls|df|inspect|rm, "
+          "rm, ps, images, logs, wait, volumes, volume ls|df|inspect|rm, "
           "pull, prune, config, port, version [--short]\n"
           "  kill: -s SIGNAL             Signal to send (default SIGKILL)\n"
           "Kernel tools: quocker kernel select|fetch --platform OS/ARCH "
@@ -7530,7 +7530,8 @@ int main(int argc, char **argv) {
       (!g_str_equal(opts.command, "config") &&
        !g_str_equal(opts.command, "images") &&
        !g_str_equal(opts.command, "port") &&
-       !g_str_equal(opts.command, "volume")) ||
+       !g_str_equal(opts.command, "volume") &&
+       !g_str_equal(opts.command, "volumes")) ||
       lifecycle_operation;
   if (create_state_directory && !opts.dry_run) {
     if (g_mkdir_with_parents(directory, 0700) < 0) {
@@ -7622,6 +7623,13 @@ int main(int argc, char **argv) {
         opts.services->len == 2 ? g_ptr_array_index(opts.services, 1) : NULL;
     ok = volume_command(action, volume_name, opts.dry_run, services,
                         project_lower, directory);
+  } else if (g_str_equal(opts.command, "volumes")) {
+    if (opts.services->len) {
+      fail("'volumes' does not accept service arguments");
+    } else {
+      ok = volume_command("ls", NULL, FALSE, services, project_lower,
+                          directory);
+    }
   } else if (g_str_equal(opts.command, "logs")) {
     LogsContext context = {directory, &opts};
     ok = for_services(services, &opts, logs_one, &context);

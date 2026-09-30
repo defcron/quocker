@@ -390,7 +390,8 @@ in user-facing compatibility promises.
    `config`, `start`, `stop`, `restart`, `kill`, `rm`, `pause`, `unpause`,
    `pull`, `build`, `create`, `run`, `exec`, `cp`, `port`, `events`, `top`,
    `wait`, `ls`, and `version`. `images` lists selected services' declared
-   image references and saved VM running/stopped/not-created state. `start`,
+   image references and saved VM running/stopped/not-created state; `volumes`
+   aliases the project-scoped `volume ls` disk inventory. `start`,
    `stop`, `restart`, `kill`,
    `pause`, and `unpause` now have initial saved-VM process handling; pause and
    resume use QMP, and the fake-QEMU integration test exercises these commands.
