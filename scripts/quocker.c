@@ -7717,7 +7717,8 @@ static QuockerVolumeInfo *find_project_volume(GPtrArray *volumes,
                                               const char *name) {
   for (guint i = 0; i < volumes->len; i++) {
     QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
-    if (g_str_equal(info->logical_name, name)) {
+    if (info && info->logical_name && name &&
+        g_str_equal(info->logical_name, name)) {
       return info;
     }
   }

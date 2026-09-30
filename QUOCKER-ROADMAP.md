@@ -663,9 +663,10 @@ in user-facing compatibility promises.
    QEMU/qemu-img operations.
 7. **Partially implemented:** a fork-only GitLab CI job configures Quocker on
    Ubuntu 24.04 with x86_64 system emulation, builds QEMU and Quocker with
-   documentation enabled, and runs the Quocker test suite. Formatting, static
-   analysis, schema-drift checks, KVM/TCG coverage, and a broader distribution
-   and architecture matrix remain.
+   documentation enabled, and runs the Quocker test suite. It also configures
+   a Clang build and runs Clang's core static analyzer checks over every
+   Quocker C source. Formatting, schema-drift checks, KVM/TCG coverage, and a
+   broader distribution and architecture matrix remain.
 
 ### Phase 10 — Documentation, packaging, and stable-QEMU maintenance
 
