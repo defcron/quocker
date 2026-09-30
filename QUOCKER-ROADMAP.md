@@ -220,7 +220,7 @@ process/state recovery, cleanup, and packaging need more coverage and review.
 OCI service ``env_file`` now supports ordered path lists, interpolation,
 optional long-form files, raw format, and service-environment precedence in C;
 explicit unresolved environment entries remove image defaults. The Quocker
-suite contains 52 tests: 31 pass, 21 produce expected failures,
+suite contains 54 tests: 32 pass, 22 produce expected failures,
 and none fail unexpectedly. It includes JSON config serialization, static and
 dynamic port queries, plus a fake-QEMU lifecycle integration
 test covering stop, start, down, pause, unpause, kill, state preservation, and
@@ -355,8 +355,10 @@ in user-facing compatibility promises.
    `up --dry-run` exposes startup order and `down --dry-run` exposes reverse
    teardown order. Guest health/completion conditions and
    dependency restart behavior await guest readiness and recreation tracking.
-   Still support profiles, scaling where
-   appropriate, recreation policies, orphan handling, timeout handling, and
+   Explicitly targeted services bypass inactive-profile filtering; selected
+   target profiles become active for dependency validation, and incompatible
+   profiled dependencies are rejected. Complete profile validation, scaling
+   where appropriate, recreation policies, orphan handling, timeout handling, and
    interruption/signals.
 4. Match project naming, labels/metadata, project listing, working directory,
    file precedence, exit codes, and common output/TTY behavior.

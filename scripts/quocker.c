@@ -4171,24 +4171,6 @@ done:
   return ok;
 }
 
-static gboolean is_enabled_service(YNode *service, Options *opts) {
-  YNode *profiles = map_get(service, "profiles");
-  if (!profiles || profiles->kind != NODE_SEQUENCE ||
-      profiles->items->len == 0) {
-    return TRUE;
-  }
-  for (guint i = 0; i < profiles->items->len; i++) {
-    const char *profile = node_string(g_ptr_array_index(profiles->items, i));
-    for (guint j = 0; j < opts->profiles->len; j++) {
-      if (g_strcmp0(profile, g_ptr_array_index(opts->profiles, j)) == 0 ||
-          g_strcmp0("*", g_ptr_array_index(opts->profiles, j)) == 0) {
-        return TRUE;
-      }
-    }
-  }
-  return FALSE;
-}
-
 static gboolean service_profile_enabled(YNode *service, Options *opts) {
   YNode *profiles = map_get(service, "profiles");
   guint count = 0;
@@ -4215,6 +4197,55 @@ static gboolean service_profile_enabled(YNode *service, Options *opts) {
   return FALSE;
 }
 
+static gboolean service_requested(Options *opts, const char *name) {
+  if (opts->services->len == 0) {
+    return TRUE;
+  }
+  for (guint i = 0; i < opts->services->len; i++) {
+    if (g_strcmp0(name, g_ptr_array_index(opts->services, i)) == 0) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+static void add_service_profiles(GHashTable *active_profiles, YNode *service) {
+  YNode *profiles = map_get(service, "profiles");
+  if (!profiles) {
+    return;
+  }
+  guint count = profiles->kind == NODE_SEQUENCE ? profiles->items->len : 1;
+  for (guint i = 0; i < count; i++) {
+    YNode *profile = profiles->kind == NODE_SEQUENCE
+                         ? g_ptr_array_index(profiles->items, i)
+                         : profiles;
+    const char *name = node_string(profile);
+    if (name && *name) {
+      g_hash_table_add(active_profiles, g_strdup(name));
+    }
+  }
+}
+
+static gboolean service_profiles_active(YNode *service,
+                                        GHashTable *active_profiles) {
+  YNode *profiles = map_get(service, "profiles");
+  if (!profiles) {
+    return TRUE;
+  }
+  guint count = profiles->kind == NODE_SEQUENCE ? profiles->items->len : 1;
+  for (guint i = 0; i < count; i++) {
+    YNode *profile = profiles->kind == NODE_SEQUENCE
+                         ? g_ptr_array_index(profiles->items, i)
+                         : profiles;
+    const char *name = node_string(profile);
+    if (name && (g_hash_table_contains(active_profiles, name) ||
+                 g_hash_table_contains(active_profiles, "*"))) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
 static gboolean
 for_services(YNode *services, Options *opts,
              gboolean (*callback)(const char *, YNode *, void *), void *data) {
@@ -4230,13 +4261,11 @@ for_services(YNode *services, Options *opts,
       fail("invalid service definition");
       return FALSE;
     }
-    if (!is_enabled_service(pair->value, opts) ||
-        !service_profile_enabled(pair->value, opts)) {
+    gboolean selected = service_requested(opts, name);
+    if (!selected ||
+        (opts->services->len == 0 &&
+         !service_profile_enabled(pair->value, opts))) {
       continue;
-    }
-    gboolean selected = opts->services->len == 0;
-    for (guint j = 0; j < opts->services->len; j++) {
-      selected |= g_strcmp0(name, g_ptr_array_index(opts->services, j)) == 0;
     }
     if (selected) {
       selected_any = TRUE;
@@ -4259,6 +4288,7 @@ typedef struct UpOrder {
   YNode *services;
   Options *opts;
   GHashTable *marks;
+  GHashTable *active_profiles;
   GPtrArray *ordered;
   gboolean validate_runtime_conditions;
 } UpOrder;
@@ -4285,6 +4315,12 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
   YNode *service = service_by_name(order->services, name);
   if (!service || service->kind != NODE_MAPPING) {
     fail("service '%s' is referenced by depends_on but is not defined", name);
+    return FALSE;
+  }
+  if (order->validate_runtime_conditions &&
+      !service_profiles_active(service, order->active_profiles)) {
+    fail("service '%s' depends on a service gated by an inactive profile",
+         name);
     return FALSE;
   }
   g_hash_table_insert(order->marks, g_strdup(name), GINT_TO_POINTER(1));
@@ -4320,8 +4356,7 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
     }
     if (options && order->validate_runtime_conditions) {
       if (options->kind != NODE_MAPPING) {
-        fail("service '%s': depends_on.%s must be a mapping", name,
-             dependency);
+        fail("service '%s': depends_on.%s must be a mapping", name, dependency);
         return FALSE;
       }
       YNode *condition_node = map_get(options, "condition");
@@ -4336,9 +4371,8 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
       }
       YNode *required = map_get(options, "required");
       if (required &&
-          (!required->scalar ||
-           !(g_str_equal(required->scalar, "true") ||
-             g_str_equal(required->scalar, "false")))) {
+          (!required->scalar || !(g_str_equal(required->scalar, "true") ||
+                                  g_str_equal(required->scalar, "false")))) {
         fail("service '%s': depends_on.%s required must be a boolean", name,
              dependency);
         return FALSE;
@@ -4346,9 +4380,8 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
       required_dependency = !required || g_str_equal(required->scalar, "true");
       YNode *restart = map_get(options, "restart");
       if (restart &&
-          (!restart->scalar ||
-           !(g_str_equal(restart->scalar, "true") ||
-             g_str_equal(restart->scalar, "false")))) {
+          (!restart->scalar || !(g_str_equal(restart->scalar, "true") ||
+                                 g_str_equal(restart->scalar, "false")))) {
         fail("service '%s': depends_on.%s restart must be a boolean", name,
              dependency);
         return FALSE;
@@ -4362,11 +4395,10 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
       for (guint field = 0; field < options->items->len; field++) {
         YPair *entry = g_ptr_array_index(options->items, field);
         const char *key = node_string(entry->key);
-        if (!key || !(g_str_equal(key, "condition") ||
-                      g_str_equal(key, "required") ||
-                      g_str_equal(key, "restart"))) {
-          fail("service '%s': unknown depends_on.%s option", name,
-               dependency);
+        if (!key ||
+            !(g_str_equal(key, "condition") || g_str_equal(key, "required") ||
+              g_str_equal(key, "restart"))) {
+          fail("service '%s': unknown depends_on.%s option", name, dependency);
           return FALSE;
         }
       }
@@ -4378,8 +4410,7 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
                   dependency);
         continue;
       }
-      fail("service '%s' depends on undefined service '%s'", name,
-           dependency);
+      fail("service '%s' depends on undefined service '%s'", name, dependency);
       return FALSE;
     }
     if (!up_order_visit(order, dependency)) {
@@ -4391,13 +4422,29 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
   return TRUE;
 }
 
-static gboolean for_up_services(
-    YNode *services, Options *opts,
-    gboolean (*callback)(const char *, YNode *, void *), void *data) {
-  UpOrder order = {services, opts,
-                   g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
-                                         NULL),
-                   g_ptr_array_new(), TRUE};
+static gboolean for_up_services(YNode *services, Options *opts,
+                                gboolean (*callback)(const char *, YNode *,
+                                                     void *),
+                                void *data) {
+  UpOrder order = {0};
+  order.services = services;
+  order.opts = opts;
+  order.marks = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  order.active_profiles =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  order.ordered = g_ptr_array_new();
+  order.validate_runtime_conditions = TRUE;
+  for (guint i = 0; i < opts->profiles->len; i++) {
+    g_hash_table_add(order.active_profiles,
+                     g_strdup(g_ptr_array_index(opts->profiles, i)));
+  }
+  for (guint i = 0; i < opts->services->len; i++) {
+    YNode *target =
+        service_by_name(services, g_ptr_array_index(opts->services, i));
+    if (target) {
+      add_service_profiles(order.active_profiles, target);
+    }
+  }
   gboolean ok = TRUE;
   for (guint i = 0; i < services->items->len && ok; i++) {
     YPair *pair = g_ptr_array_index(services->items, i);
@@ -4407,12 +4454,9 @@ static gboolean for_up_services(
       ok = FALSE;
       break;
     }
-    gboolean selected = opts->services->len == 0;
-    for (guint j = 0; j < opts->services->len; j++) {
-      selected |= g_strcmp0(name, g_ptr_array_index(opts->services, j)) == 0;
-    }
-    if (selected && is_enabled_service(pair->value, opts) &&
-        service_profile_enabled(pair->value, opts)) {
+    gboolean selected = service_requested(opts, name);
+    if (selected && (opts->services->len > 0 ||
+                     service_profile_enabled(pair->value, opts))) {
       ok = up_order_visit(&order, name);
     }
   }
@@ -4425,17 +4469,21 @@ static gboolean for_up_services(
     ok = callback(name, service_by_name(services, name), data);
   }
   g_ptr_array_free(order.ordered, TRUE);
+  g_hash_table_destroy(order.active_profiles);
   g_hash_table_destroy(order.marks);
   return ok;
 }
 
-static gboolean for_down_services(
-    YNode *services, Options *opts,
-    gboolean (*callback)(const char *, YNode *, void *), void *data) {
-  UpOrder order = {services, opts,
-                   g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
-                                         NULL),
-                   g_ptr_array_new(), FALSE};
+static gboolean for_down_services(YNode *services, Options *opts,
+                                  gboolean (*callback)(const char *, YNode *,
+                                                       void *),
+                                  void *data) {
+  UpOrder order = {0};
+  order.services = services;
+  order.opts = opts;
+  order.marks = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  order.ordered = g_ptr_array_new();
+  order.validate_runtime_conditions = FALSE;
   gboolean ok = TRUE;
   for (guint i = 0; i < services->items->len && ok; i++) {
     YPair *pair = g_ptr_array_index(services->items, i);
@@ -4445,12 +4493,9 @@ static gboolean for_down_services(
       ok = FALSE;
       break;
     }
-    gboolean selected = opts->services->len == 0;
-    for (guint j = 0; j < opts->services->len; j++) {
-      selected |= g_strcmp0(name, g_ptr_array_index(opts->services, j)) == 0;
-    }
-    if (selected && is_enabled_service(pair->value, opts) &&
-        service_profile_enabled(pair->value, opts)) {
+    gboolean selected = service_requested(opts, name);
+    if (selected && (opts->services->len > 0 ||
+                     service_profile_enabled(pair->value, opts))) {
       ok = up_order_visit(&order, name);
     }
   }
@@ -5078,13 +5123,11 @@ static void follow_logs(YNode *services, Options *opts, const char *directory) {
   for (guint i = 0; i < services->items->len; i++) {
     YPair *pair = g_ptr_array_index(services->items, i);
     const char *name = node_string(pair->key);
-    if (!is_enabled_service(pair->value, opts) ||
-        !service_profile_enabled(pair->value, opts)) {
+    gboolean selected = service_requested(opts, name);
+    if (!selected ||
+        (opts->services->len == 0 &&
+         !service_profile_enabled(pair->value, opts))) {
       continue;
-    }
-    gboolean selected = opts->services->len == 0;
-    for (guint j = 0; j < opts->services->len; j++) {
-      selected |= g_strcmp0(name, g_ptr_array_index(opts->services, j)) == 0;
     }
     if (selected) {
       char *path = g_strdup_printf("%s/%s.log", directory, name);

@@ -1,0 +1,13 @@
+services:
+  base:
+    image: ./base.qcow2
+  tool:
+    image: ./tool.qcow2
+    profiles: [tools]
+    depends_on: [base, tool-helper]
+  tool-helper:
+    image: ./tool-helper.qcow2
+    profiles: [tools]
+  sibling:
+    image: ./sibling.qcow2
+    profiles: [tools]

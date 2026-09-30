@@ -1,0 +1,8 @@
+services:
+  consumer:
+    image: ./consumer.qcow2
+    profiles: [debug]
+    depends_on: [dependency]
+  dependency:
+    image: ./dependency.qcow2
+    profiles: [database]

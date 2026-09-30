@@ -377,3 +377,9 @@ services fail before any VM is started. Long-form ``required: false`` skips a
 missing optional dependency. ``up --dry-run`` prints the dependency-ordered
 start plan without creating project state or starting VMs. ``down --dry-run``
 shows the corresponding reverse order, stopping dependents before dependencies.
+An explicitly named service starts even when its profile was not globally
+enabled; Quocker starts only that service and its declared dependencies.
+Dependencies in an inactive profile fail unless that profile is enabled by
+``--profile``, ``COMPOSE_PROFILES``, or a profile shared with the targeted
+service. Other services that share the target's profile are not started just
+because one service was named.

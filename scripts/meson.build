@@ -216,6 +216,18 @@ if not get_option('quocker').disabled()
     test('quocker-dependencies-missing', quocker,
          args: ['-f', files('../tests/quocker/dependencies-missing.yaml'), 'up'],
          should_fail: true, suite: ['quocker'])
+    quocker_profiles_test = executable(
+      'quocker-profiles-test', files('../tests/quocker/profiles-test.c'),
+      dependencies: [glib])
+    test('quocker-profiles-explicit-service', quocker_profiles_test,
+         args: [files('../tests/quocker/profiles.yaml')],
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
+    test('quocker-profiles-incompatible-dependency', quocker,
+         args: ['-f',
+                files('../tests/quocker/profiles-incompatible-dependency.yaml'),
+                'up', '--dry-run', 'consumer'],
+         should_fail: true, suite: ['quocker'])
     test('quocker-ports-invalid-host-ip', quocker,
          args: ['-f', files('../tests/quocker/ports-invalid-hostip.yaml'),
                 'up', '--dry-run'],
