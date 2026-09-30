@@ -183,10 +183,11 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
    * - ``config``
      - ``--format yaml|json``, ``-o``/``--output FILE``, ``--quiet``,
        ``--environment``, ``--services``, ``--profiles``, ``--images``,
-       ``--volumes``, ``--networks``, ``--models``, and Quocker-specific
+       ``--volumes``, ``--networks``, ``--models``, ``--no-env-resolution``,
+       and Quocker-specific
        ``--capabilities``.
      - ``--hash``, ``--lock-image-digests``, ``--variables``,
-       ``--no-consistency``, ``--no-env-resolution``, ``--no-interpolate``,
+       ``--no-consistency``, ``--no-interpolate``,
        ``--no-normalize``, ``--no-path-resolution``, and image-digest
        resolution. See the
        `Compose config reference <https://docs.docker.com/reference/cli/docker/compose/config/>`_.
@@ -304,6 +305,8 @@ By default, rendered service ``env_file`` entries are read in order and merged
 into ``environment``; service ``environment`` entries take precedence,
 including explicit empty and unresolved values. The rendered service omits
 ``env_file`` after this resolution.
+``config --no-env-resolution`` skips reading service env files and retains their
+paths in normalized absolute-path form.
 These output selection modes cannot be combined with ``--format``; without an
 output selection option, ``config`` renders YAML by default or JSON with
 ``--format json``.

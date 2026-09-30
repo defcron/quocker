@@ -88,6 +88,7 @@ typedef struct Options {
   guint wait_timeout_seconds;
   guint shutdown_timeout_seconds;
   gboolean dry_run;
+  gboolean config_no_env_resolution;
   int signal_number;
   gboolean remove_volumes;
   gboolean remove_orphans;
@@ -4784,24 +4785,101 @@ static YNode *config_environment_string(const char *value,
   return node;
 }
 
+static YNode *config_env_file_path_entry(YNode *spec, const char *project_root,
+                                         const char *service_name) {
+  const char *path = spec->kind == NODE_SCALAR
+                         ? node_string(spec)
+                         : node_string(map_get(spec, "path"));
+  if (!path || !*path) {
+    fail("service '%s': env_file.path must be a non-empty string",
+         service_name);
+    return NULL;
+  }
+  gboolean required;
+  if (spec->kind == NODE_MAPPING &&
+      !env_file_required(map_get(spec, "required"), &required,
+                         service_name)) {
+    return NULL;
+  }
+  const char *format = spec->kind == NODE_MAPPING
+                           ? node_string(map_get(spec, "format"))
+                           : NULL;
+  if (format && !g_str_equal(format, "raw")) {
+    fail("service '%s': env_file.format must be 'raw' when specified",
+         service_name);
+    return NULL;
+  }
+  char *absolute = absolute_path(path, project_root);
+  YNode *entry = spec->kind == NODE_MAPPING
+                     ? node_clone(spec)
+                     : node_new(NODE_MAPPING, TAG_MAP);
+  YNode *path_node = node_new(NODE_SCALAR, TAG_STR);
+  path_node->scalar = absolute;
+  map_set(entry, "path", path_node);
+  return entry;
+}
+
+static gboolean normalize_config_env_file_paths(YNode *service,
+                                                const char *project_root,
+                                                const char *service_name) {
+  YNode *env_file = map_get(service, "env_file");
+  if (!env_file) {
+    return TRUE;
+  }
+  YNode *normalized = node_new(NODE_SEQUENCE, TAG_SEQ);
+  if (env_file->kind == NODE_SEQUENCE) {
+    for (guint i = 0; i < env_file->items->len; i++) {
+      YNode *entry = config_env_file_path_entry(
+          g_ptr_array_index(env_file->items, i), project_root, service_name);
+      if (!entry) {
+        node_free(normalized);
+        return FALSE;
+      }
+      g_ptr_array_add(normalized->items, entry);
+    }
+  } else {
+    YNode *entry = config_env_file_path_entry(env_file, project_root,
+                                              service_name);
+    if (!entry) {
+      node_free(normalized);
+      return FALSE;
+    }
+    g_ptr_array_add(normalized->items, entry);
+  }
+  map_set(service, "env_file", normalized);
+  return TRUE;
+}
+
 static gboolean resolve_config_service_env_files(YNode *config,
                                                  const char *project_root,
-                                                 GHashTable *environment) {
+                                                 GHashTable *environment,
+                                                 gboolean resolve_env_files) {
   YNode *services = map_get(config, "services");
   for (guint i = 0; services && i < services->items->len; i++) {
     YPair *service_pair = g_ptr_array_index(services->items, i);
     const char *service_name = node_string(service_pair->key);
     YNode *service = service_pair->value;
     YNode *env_file = map_get(service, "env_file");
-    if (!env_file) {
+    gboolean has_env_file = env_file != NULL;
+    YNode *original_environment = map_get(service, "environment");
+    if (!has_env_file && !original_environment) {
+      continue;
+    }
+    if (has_env_file && !resolve_env_files &&
+        !normalize_config_env_file_paths(service, project_root,
+                                         service_name)) {
+      return FALSE;
+    }
+    if (has_env_file && !resolve_env_files && !original_environment) {
       continue;
     }
     GHashTable *file_values = NULL;
     GHashTable *overrides = NULL;
-    if (!parse_service_env_files(env_file, project_root, service_name,
-                                 environment, &file_values) ||
-        !parse_environment_override(map_get(service, "environment"),
-                                    service_name, &overrides)) {
+    if ((has_env_file && resolve_env_files &&
+         !parse_service_env_files(env_file, project_root, service_name,
+                                  environment, &file_values)) ||
+        !parse_environment_override(original_environment, service_name,
+                                    &overrides)) {
       if (file_values) {
         g_hash_table_destroy(file_values);
       }
@@ -4809,6 +4887,10 @@ static gboolean resolve_config_service_env_files(YNode *config,
         g_hash_table_destroy(overrides);
       }
       return FALSE;
+    }
+    if (!file_values) {
+      file_values =
+          g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     }
     GHashTableIter iterator;
     gpointer key;
@@ -4830,7 +4912,6 @@ static gboolean resolve_config_service_env_files(YNode *config,
     }
     g_ptr_array_sort(ordered_keys, compare_string_pointers);
     YNode *resolved_environment = node_new(NODE_MAPPING, TAG_MAP);
-    YNode *original_environment = map_get(service, "environment");
     for (guint j = 0; j < ordered_keys->len; j++) {
       const char *name = g_ptr_array_index(ordered_keys, j);
       const char *resolved = g_hash_table_lookup(file_values, name);
@@ -4850,7 +4931,9 @@ static gboolean resolve_config_service_env_files(YNode *config,
     g_hash_table_destroy(keys);
     g_hash_table_destroy(overrides);
     g_hash_table_destroy(file_values);
-    map_remove(service, "env_file");
+    if (has_env_file && resolve_env_files) {
+      map_remove(service, "env_file");
+    }
     map_set(service, "environment", resolved_environment);
   }
   return TRUE;
@@ -7346,6 +7429,7 @@ static void usage(FILE *file) {
           "  config --volumes|--networks|--models List declared resources\n"
           "  config --capabilities       Report service-field support\n"
           "  config --environment        Print interpolation environment\n"
+          "  config --no-env-resolution Retain normalized env_file paths\n"
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
@@ -7574,6 +7658,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(opts->command, "config") &&
                g_str_equal(arg, "--quiet")) {
       opts->quiet = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "config") &&
+               g_str_equal(arg, "--no-env-resolution")) {
+      opts->config_no_env_resolution = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
                (g_str_equal(arg, "-q") || g_str_equal(arg, "--quiet"))) {
       opts->quiet = TRUE;
@@ -8462,7 +8549,8 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (g_str_equal(opts.command, "config") &&
-      !resolve_config_service_env_files(config, root, project_environment)) {
+      !resolve_config_service_env_files(config, root, project_environment,
+                                        !opts.config_no_env_resolution)) {
     return 1;
   }
   YNode *services = map_get(config, "services");

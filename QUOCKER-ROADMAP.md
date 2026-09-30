@@ -390,8 +390,10 @@ in user-facing compatibility promises.
    sorted services, profiles, images, volumes, networks, or models, and prints
    the interpolation environment; `config` resolves service env files into
    each service's `environment` map by default. `-o`/`--output` atomically writes
-   rendered YAML or JSON. Schema-aware normalization, image resolution, path
-   output modes, and the remaining Docker Compose config flags remain.
+   rendered YAML or JSON. `--no-env-resolution` preserves service env-file
+   declarations with absolute paths and skips reading their contents.
+   Schema-aware normalization, image resolution, path output modes, and the
+   remaining Docker Compose config flags remain.
 9. **Partially implemented:** service-level `x-quocker` is versioned as
    version 1, with omitted version treated as legacy shorthand for version 1.
    The strict C validator accepts only `image` and `kernel` extension fields,
