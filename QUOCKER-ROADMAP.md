@@ -454,12 +454,18 @@ in user-facing compatibility promises.
 
 ### Phase 5 — Build the storage model and lifecycle controls
 
-1. Define the VM root disk, immutable base images, qcow2 overlay chains,
-   named Compose volumes, anonymous volumes, bind mounts, tmpfs, and read-only
-   storage mappings.
-2. Map volume short/long syntax, drivers, options, external resources, and
-   project scoping. Translate only semantics that can be implemented safely
-   for a guest.
+1. **Partially implemented:** OCI services boot from immutable cached base
+   disks with per-service qcow2 overlays. Named and anonymous Compose volume
+   mounts, including OCI image-declared volume targets and read-only mounts,
+   use persistent project-scoped sparse ext4 disks attached over virtio. The
+   guest init mounts those disks before pivoting into the root filesystem.
+   Bind mounts and tmpfs remain unsupported.
+2. **Partially implemented:** Compose volume short syntax and a limited long
+   syntax support local named and anonymous volumes with project scoping.
+   External volumes, non-local drivers, driver options, and volume suboptions
+   fail explicitly. Existing disks retain their original size; new disks
+   default to 1 GiB and ``QUOCKER_VOLUME_SIZE`` can select 64 MiB through
+   1 TiB.
 3. Implement inspect/list/create/remove/prune operations with previews,
    ownership metadata, confirmation where destructive, and recovery guidance.
 4. Add explicit disk quotas and configurable retention/GC. Prevent invisible

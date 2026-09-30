@@ -35,6 +35,7 @@ if not get_option('quocker').disabled()
                                     'quocker-oci.c',
                                     'quocker-rootfs.c', 'quocker-kernel.c',
                                     'quocker-image.c', 'quocker-disk.c',
+                                    'quocker-volume.c',
                                     'quocker-initrd.c', 'quocker-env.c',
                                     'quocker-registry-auth.c',
                                     'quocker-registry-config.c',
@@ -347,6 +348,12 @@ if not get_option('quocker').disabled()
          env: ['QUOCKER_GUEST_INIT=' + quocker_guest_init.full_path()],
          depends: [quocker_guest_init],
          suite: ['quocker'])
+
+    quocker_volume_test = executable(
+      'quocker-volume-test',
+      [files('../tests/quocker/volume-test.c'), 'quocker-volume.c'],
+      dependencies: [glib])
+    test('quocker-volume', quocker_volume_test, suite: ['quocker'])
   endif
 endif
 

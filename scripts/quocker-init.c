@@ -37,6 +37,9 @@ typedef struct GuestConfig {
   uint32_t argc;
   char **environment;
   uint32_t environment_count;
+  char **mount_targets;
+  uint32_t *mount_read_only;
+  uint32_t mount_count;
   char *working_directory;
   char *user;
 } GuestConfig;
@@ -119,6 +122,27 @@ static int read_config_item(int fd, char **value_out) {
   return read_config_string(fd, read_be32(encoded_length), value_out);
 }
 
+static int valid_mount_target(const char *target) {
+  if (!target || target[0] != '/' || target[1] == '\0' ||
+      strlen(target) > CONFIG_MAX_STRING) {
+    return 0;
+  }
+  const char *component = target + 1;
+  for (const char *cursor = component;; cursor++) {
+    if (*cursor == '/' || *cursor == '\0') {
+      size_t length = (size_t)(cursor - component);
+      if (!length || (length == 1 && component[0] == '.') ||
+          (length == 2 && component[0] == '.' && component[1] == '.')) {
+        return 0;
+      }
+      if (!*cursor) {
+        return 1;
+      }
+      component = cursor + 1;
+    }
+  }
+}
+
 static int valid_environment_assignment(const char *assignment) {
   const char *equals = strchr(assignment, '=');
   if (!equals || equals == assignment ||
@@ -142,22 +166,29 @@ static int load_config(const char *path, GuestConfig *config) {
     return -1;
   }
   struct stat st;
-  unsigned char header[24];
+  unsigned char header[28];
   int result = -1;
   if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size < 24 ||
-      st.st_size > CONFIG_MAX_BYTES ||
-      read_exact(fd, header, sizeof(header)) < 0 ||
-      memcmp(header, "QCFG", 4) != 0 || read_be32(header + 4) != 1) {
+      st.st_size > CONFIG_MAX_BYTES || read_exact(fd, header, 8) < 0 ||
+      memcmp(header, "QCFG", 4) != 0) {
+    errno = EINVAL;
+    goto done;
+  }
+  uint32_t version = read_be32(header + 4);
+  size_t remaining_header = version == 1 ? 16 : version == 2 ? 20 : 0;
+  if (!remaining_header || read_exact(fd, header + 8, remaining_header) < 0) {
     errno = EINVAL;
     goto done;
   }
   config->argc = read_be32(header + 8);
   config->environment_count = read_be32(header + 12);
-  uint32_t working_directory_size = read_be32(header + 16);
-  uint32_t user_size = read_be32(header + 20);
+  config->mount_count = version == 2 ? read_be32(header + 16) : 0;
+  uint32_t working_directory_size =
+      read_be32(header + (version == 2 ? 20 : 16));
+  uint32_t user_size = read_be32(header + (version == 2 ? 24 : 20));
   if (!config->argc || config->argc > CONFIG_MAX_ITEMS ||
       config->environment_count > CONFIG_MAX_ITEMS ||
-      working_directory_size > CONFIG_MAX_STRING ||
+      config->mount_count > 25 || working_directory_size > CONFIG_MAX_STRING ||
       user_size > CONFIG_MAX_STRING) {
     errno = E2BIG;
     goto done;
@@ -165,7 +196,12 @@ static int load_config(const char *path, GuestConfig *config) {
   config->argv = calloc((size_t)config->argc + 1, sizeof(char *));
   config->environment =
       calloc((size_t)config->environment_count + 1, sizeof(char *));
-  if (!config->argv || !config->environment) {
+  config->mount_targets =
+      calloc((size_t)config->mount_count + 1, sizeof(char *));
+  config->mount_read_only =
+      calloc((size_t)config->mount_count + 1, sizeof(uint32_t));
+  if (!config->argv || !config->environment || !config->mount_targets ||
+      !config->mount_read_only) {
     goto done;
   }
   for (uint32_t i = 0; i < config->argc; i++) {
@@ -176,6 +212,20 @@ static int load_config(const char *path, GuestConfig *config) {
   for (uint32_t i = 0; i < config->environment_count; i++) {
     if (read_config_item(fd, &config->environment[i]) < 0 ||
         !valid_environment_assignment(config->environment[i])) {
+      errno = EINVAL;
+      goto done;
+    }
+  }
+  for (uint32_t i = 0; i < config->mount_count; i++) {
+    unsigned char flags[4];
+    if (read_config_item(fd, &config->mount_targets[i]) < 0 ||
+        !valid_mount_target(config->mount_targets[i]) ||
+        read_exact(fd, flags, sizeof(flags)) < 0) {
+      errno = EINVAL;
+      goto done;
+    }
+    config->mount_read_only[i] = read_be32(flags);
+    if (config->mount_read_only[i] > 1) {
       errno = EINVAL;
       goto done;
     }
@@ -211,6 +261,75 @@ static int ensure_directory(const char *path) {
   return -1;
 }
 
+static int ensure_mount_directory(const char *target, char *full_path,
+                                  size_t full_path_size) {
+  char relative[PATH_MAX];
+  if (!valid_mount_target(target) || strlen(target + 1) >= sizeof(relative) ||
+      snprintf(full_path, full_path_size, "%s%s", NEW_ROOT, target) >=
+          (int)full_path_size) {
+    errno = EINVAL;
+    return -1;
+  }
+  memcpy(relative, target + 1, strlen(target + 1) + 1);
+  int directory =
+      open(NEW_ROOT, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (directory < 0) {
+    return -1;
+  }
+  char *save = NULL;
+  for (char *component = strtok_r(relative, "/", &save); component;
+       component = strtok_r(NULL, "/", &save)) {
+    if (mkdirat(directory, component, 0755) < 0 && errno != EEXIST) {
+      close(directory);
+      return -1;
+    }
+    int child = openat(directory, component,
+                       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (child < 0) {
+      close(directory);
+      return -1;
+    }
+    close(directory);
+    directory = child;
+  }
+  close(directory);
+  return 0;
+}
+
+static int mount_guest_volumes(const GuestConfig *config) {
+  for (uint32_t i = 0; i < config->mount_count; i++) {
+    char device[32];
+    char target[PATH_MAX];
+    struct stat st;
+    if (snprintf(device, sizeof(device), "/dev/vd%c", 'b' + i) >=
+            (int)sizeof(device) ||
+        ensure_mount_directory(config->mount_targets[i], target,
+                               sizeof(target)) < 0) {
+      return -1;
+    }
+    int found = 0;
+    for (int retry = 0; retry < 50; retry++) {
+      if (stat(device, &st) == 0 && S_ISBLK(st.st_mode)) {
+        found = 1;
+        break;
+      }
+      usleep(100000);
+    }
+    if (!found) {
+      errno = ENODEV;
+      return -1;
+    }
+    unsigned long flags = MS_RELATIME;
+    if (config->mount_read_only[i]) {
+      flags |= MS_RDONLY;
+    }
+    if (mount(device, target, "ext4", flags, NULL) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 static int prepare_root_device(void) {
   if (mount("devtmpfs", "/dev", "devtmpfs", MS_NOSUID, NULL) == 0) {
     return 0;
@@ -225,7 +344,7 @@ static int prepare_root_device(void) {
   return mknod(ROOT_DEVICE, S_IFBLK | 0600, makedev(252, 0));
 }
 
-static int mount_guest_root(void) {
+static int mount_guest_root(const GuestConfig *config) {
   if (ensure_directory(NEW_ROOT) < 0 || prepare_root_device() < 0 ||
       mount(ROOT_DEVICE, NEW_ROOT, "ext4", MS_RELATIME, NULL) < 0) {
     return -1;
@@ -262,6 +381,9 @@ static int mount_guest_root(void) {
             "newinstance,ptmxmode=0666,mode=0620") < 0 ||
       mount("mqueue", NEW_ROOT "/dev/mqueue", "mqueue",
             MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) < 0) {
+    return -1;
+  }
+  if (mount_guest_volumes(config) < 0) {
     return -1;
   }
   if (syscall(SYS_pivot_root, NEW_ROOT, OLD_ROOT) < 0 || chdir("/") < 0 ||
@@ -488,8 +610,9 @@ int main(int argc, char **argv) {
               strerror(errno));
       return 1;
     }
-    dprintf(STDOUT_FILENO, "valid QCFG v1: %u argv, %u environment values\n",
-            checked.argc, checked.environment_count);
+    dprintf(STDOUT_FILENO,
+            "valid QCFG v2: %u argv, %u environment values, %u volumes\n",
+            checked.argc, checked.environment_count, checked.mount_count);
     return 0;
   }
   if (getpid() != 1) {
@@ -500,7 +623,7 @@ int main(int argc, char **argv) {
   if (load_config(CONFIG_PATH, &config) < 0) {
     fail_guest("invalid or missing guest configuration");
   }
-  if (mount_guest_root() < 0) {
+  if (mount_guest_root(&config) < 0) {
     fail_guest("could not mount and enter the guest root filesystem");
   }
   supervise(&config);

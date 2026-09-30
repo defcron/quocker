@@ -23,12 +23,25 @@ typedef struct QuockerImageDefaults {
   GPtrArray *kernel_module_releases;
 } QuockerImageDefaults;
 
+typedef struct QuockerGuestMount {
+  char *target;
+  char *volume_name;
+  char *disk_path;
+  gboolean read_only;
+} QuockerGuestMount;
+
 typedef struct QuockerRuntimeConfig {
   GPtrArray *argv;
+  GPtrArray *mounts;
   GHashTable *environment;
   char *working_directory;
   char *user;
 } QuockerRuntimeConfig;
+
+gboolean quocker_runtime_config_add_mount(QuockerRuntimeConfig *runtime,
+                                          const char *target,
+                                          const char *volume_name,
+                                          gboolean read_only, GError **error);
 
 gboolean quocker_image_defaults_parse(const char *json, gsize length,
                                       QuockerImageDefaults **defaults_out,

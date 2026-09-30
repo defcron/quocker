@@ -161,8 +161,21 @@ from the project directory. Env-file values are overridden by the service's
 ``environment`` field, which in turn overrides image defaults; an explicitly
 unresolved environment entry removes that value from the guest. These settings
 apply to OCI-backed services; local-disk services do not interpret application
-environment fields. OCI-declared volumes currently fail clearly because they
-need explicit VM-volume mapping.
+environment fields. OCI-backed services support Compose named and anonymous
+volume mounts as separate persistent ext4 disks attached through virtio. Named
+disks are scoped to the Compose project; anonymous disk names are derived from
+the service and guest target. OCI image-declared volume targets receive
+anonymous disks unless the service explicitly mounts another volume at that
+target. ``ro`` mounts are mounted read-only inside the guest. Disks default to
+a sparse 1 GiB virtual size; ``QUOCKER_VOLUME_SIZE`` sets the size for newly
+created disks (for example, ``512MiB`` or ``2GiB``, from 64 MiB to 1 TiB).
+Existing disks retain their original size.
+``down`` preserves these disks; ``down --volumes`` removes project volume disks
+after all project VMs have stopped. Bind mounts, tmpfs, external volumes,
+non-local drivers, driver options, and long-form volume suboptions are
+currently rejected for OCI guests. Local QEMU disk services do not interpret
+Compose volume mounts. New disks start empty: Quocker does not implement
+Compose's initial copy-up behavior from image contents into a new volume yet.
 OCI pulls default to the host architecture when it maps to a supported Linux
 platform. Cross-architecture guests require matching guest-init and kernel
 catalog assets.

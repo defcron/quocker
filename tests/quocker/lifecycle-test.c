@@ -8,22 +8,17 @@
 static gboolean run_cli(const char *cli, const char *directory,
                         const char *compose_file, const char *command,
                         gchar **stdout_text) {
-  char *arguments[] = {(char *)cli,
-                       (char *)"--project-directory",
-                       (char *)directory,
-                       (char *)"--project-name",
-                       (char *)"lifecycle",
-                       (char *)"-f",
-                       (char *)compose_file,
-                       (char *)command,
-                       (char *)"app",
-                       NULL};
+  char *arguments[] = {(char *)cli,          (char *)"--project-directory",
+                       (char *)directory,    (char *)"--project-name",
+                       (char *)"lifecycle",  (char *)"-f",
+                       (char *)compose_file, (char *)command,
+                       (char *)"app",        NULL};
   gchar *stderr_text = NULL;
   gint status = 0;
   GError *error = NULL;
-  gboolean spawned = g_spawn_sync(NULL, arguments, NULL, G_SPAWN_DEFAULT,
-                                  NULL, NULL, stdout_text, &stderr_text,
-                                  &status, &error);
+  gboolean spawned =
+      g_spawn_sync(NULL, arguments, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+                   stdout_text, &stderr_text, &status, &error);
   if (!spawned) {
     g_error("could not execute quocker: %s", error->message);
   }
@@ -33,6 +28,40 @@ static gboolean run_cli(const char *cli, const char *directory,
                    stderr_text ? stderr_text : "");
   }
   g_clear_error(&error);
+  g_free(stderr_text);
+  return ok;
+}
+
+static gboolean remove_cli_volumes(const char *cli, const char *directory,
+                                   const char *compose_file) {
+  char *arguments[] = {(char *)cli,
+                       (char *)"--project-directory",
+                       (char *)directory,
+                       (char *)"--project-name",
+                       (char *)"lifecycle",
+                       (char *)"-f",
+                       (char *)compose_file,
+                       (char *)"down",
+                       (char *)"--volumes",
+                       (char *)"app",
+                       NULL};
+  gchar *stdout_text = NULL;
+  gchar *stderr_text = NULL;
+  gint status = 0;
+  GError *error = NULL;
+  gboolean spawned =
+      g_spawn_sync(NULL, arguments, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+                   &stdout_text, &stderr_text, &status, &error);
+  if (!spawned) {
+    g_error("could not execute quocker: %s", error->message);
+  }
+  gboolean ok = g_spawn_check_wait_status(status, &error);
+  if (!ok && error) {
+    g_test_message("quocker down --volumes failed: %s; stderr: %s",
+                   error->message, stderr_text ? stderr_text : "");
+  }
+  g_clear_error(&error);
+  g_free(stdout_text);
   g_free(stderr_text);
   return ok;
 }
@@ -54,8 +83,8 @@ static void assert_dynamic_port(const char *cli, const char *directory,
   gchar *stderr_text = NULL;
   gint status = 0;
   GError *error = NULL;
-  g_assert_true(g_spawn_sync(NULL, arguments, NULL, G_SPAWN_DEFAULT, NULL,
-                             NULL, &output, &stderr_text, &status, &error));
+  g_assert_true(g_spawn_sync(NULL, arguments, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+                             &output, &stderr_text, &status, &error));
   g_assert_no_error(error);
   g_assert_true(g_spawn_check_wait_status(status, &error));
   g_assert_no_error(error);
@@ -75,13 +104,14 @@ static void test_stop_preserves_vm_state(void) {
   char *directory = g_dir_make_tmp("quocker-lifecycle-XXXXXX", &error);
   g_assert_no_error(error);
   char *compose = g_build_filename(directory, "compose.yaml", NULL);
-  g_assert_true(g_file_set_contents(
-      compose,
-      "services:\n  app:\n    image: ./disk.qcow2\n    ports:\n      - \"127.0.0.1::80\"\n",
-      -1, &error));
+  g_assert_true(
+      g_file_set_contents(compose,
+                          "services:\n  app:\n    image: ./disk.qcow2\n    "
+                          "ports:\n      - \"127.0.0.1::80\"\n",
+                          -1, &error));
   g_assert_no_error(error);
-  char *state_directory = g_build_filename(directory, ".quocker", "lifecycle",
-                                            NULL);
+  char *state_directory =
+      g_build_filename(directory, ".quocker", "lifecycle", NULL);
   g_assert_cmpint(g_mkdir_with_parents(state_directory, 0700), ==, 0);
   g_setenv("QUOCKER_QEMU", fake_qemu, TRUE);
   g_setenv("QUOCKER_QEMU_IMG", fake_qemu_img, TRUE);
@@ -98,9 +128,8 @@ static void test_stop_preserves_vm_state(void) {
   char *fake_argv[] = {(char *)fake_qemu, (char *)"-name",
                        (char *)"lifecycle-app", NULL};
   GPid child = 0;
-  g_assert_true(g_spawn_async(NULL, fake_argv, NULL,
-                              G_SPAWN_DO_NOT_REAP_CHILD, NULL, NULL, &child,
-                              &error));
+  g_assert_true(g_spawn_async(NULL, fake_argv, NULL, G_SPAWN_DO_NOT_REAP_CHILD,
+                              NULL, NULL, &child, &error));
   g_assert_no_error(error);
   g_usleep(50000);
   char *state_path = g_build_filename(state_directory, "app.state", NULL);
@@ -137,9 +166,8 @@ static void test_stop_preserves_vm_state(void) {
   gchar **state_lines = g_strsplit(started_state, "\n", 0);
   g_assert_nonnull(state_lines[3]);
   g_assert_cmpuint(g_ascii_strtoull(state_lines[3], NULL, 10), >, 0);
-  char *mismatched_state = g_strdup_printf("%s\n%s\n%s\n1\n",
-                                           state_lines[0], state_lines[1],
-                                           state_lines[2]);
+  char *mismatched_state = g_strdup_printf("%s\n%s\n%s\n1\n", state_lines[0],
+                                           state_lines[1], state_lines[2]);
   g_assert_true(g_file_set_contents(state_path, mismatched_state, -1, &error));
   g_assert_no_error(error);
   g_free(mismatched_state);
@@ -181,8 +209,18 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_false(g_file_test(state_path, G_FILE_TEST_EXISTS));
   g_assert_false(g_file_test(pidfile, G_FILE_TEST_EXISTS));
 
-  g_assert_cmpint(g_unlink(overlay_sidecar), ==, 0);
-  g_assert_cmpint(g_unlink(overlay_disk), ==, 0);
+  char *volumes_directory = g_build_filename(state_directory, "volumes", NULL);
+  char *volume_disk =
+      g_build_filename(volumes_directory, "persistent.ext4", NULL);
+  g_assert_cmpint(g_mkdir(volumes_directory, 0700), ==, 0);
+  g_assert_true(g_file_set_contents(volume_disk, "disk", -1, &error));
+  g_assert_no_error(error);
+  g_assert_true(remove_cli_volumes(cli, directory, compose));
+  g_assert_false(g_file_test(volume_disk, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(volumes_directory, G_FILE_TEST_EXISTS));
+
+  g_assert_false(g_file_test(overlay_sidecar, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(overlay_disk, G_FILE_TEST_EXISTS));
   g_assert_cmpint(g_unlink(base_disk), ==, 0);
   g_assert_cmpint(g_unlink(compose), ==, 0);
   g_assert_cmpint(g_rmdir(state_directory), ==, 0);
@@ -190,6 +228,8 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_cmpint(g_rmdir(quocker_directory), ==, 0);
   g_assert_cmpint(g_rmdir(directory), ==, 0);
   g_free(quocker_directory);
+  g_free(volume_disk);
+  g_free(volumes_directory);
   g_free(state_path);
   g_free(pidfile);
   g_free(qmp_socket);

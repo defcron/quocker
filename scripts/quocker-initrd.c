@@ -82,6 +82,27 @@ static gboolean valid_environment_name(const char *name) {
   return TRUE;
 }
 
+static gboolean valid_mount_target(const char *target) {
+  if (!target || target[0] != '/' || target[1] == '\0' ||
+      strlen(target) > INITRD_MAX_STRING) {
+    return FALSE;
+  }
+  const char *component = target + 1;
+  for (const char *cursor = component;; cursor++) {
+    if (*cursor == '/' || *cursor == '\0') {
+      gsize length = (gsize)(cursor - component);
+      if (!length || (length == 1 && component[0] == '.') ||
+          (length == 2 && component[0] == '.' && component[1] == '.')) {
+        return FALSE;
+      }
+      if (!*cursor) {
+        return TRUE;
+      }
+      component = cursor + 1;
+    }
+  }
+}
+
 gboolean quocker_guest_config_encode(const QuockerRuntimeConfig *runtime,
                                      GByteArray **config_out, GError **error) {
   if (config_out) {
@@ -89,7 +110,8 @@ gboolean quocker_guest_config_encode(const QuockerRuntimeConfig *runtime,
   }
   if (!runtime || !runtime->argv || !runtime->environment || !config_out ||
       !runtime->argv->len || runtime->argv->len > INITRD_MAX_ITEMS ||
-      g_hash_table_size(runtime->environment) > INITRD_MAX_ITEMS) {
+      g_hash_table_size(runtime->environment) > INITRD_MAX_ITEMS ||
+      (runtime->mounts && runtime->mounts->len > 25)) {
     initrd_error(error,
                  "guest runtime configuration is incomplete or too large");
     return FALSE;
@@ -101,9 +123,10 @@ gboolean quocker_guest_config_encode(const QuockerRuntimeConfig *runtime,
   }
   GByteArray *bytes = g_byte_array_sized_new(256);
   g_byte_array_append(bytes, (const guint8 *)"QCFG", 4);
-  append_be32(bytes, 1);
+  append_be32(bytes, 2);
   append_be32(bytes, runtime->argv->len);
   append_be32(bytes, g_hash_table_size(runtime->environment));
+  append_be32(bytes, runtime->mounts ? runtime->mounts->len : 0);
   gsize working_size =
       runtime->working_directory ? strlen(runtime->working_directory) : 0;
   gsize user_size = runtime->user ? strlen(runtime->user) : 0;
@@ -147,6 +170,18 @@ gboolean quocker_guest_config_encode(const QuockerRuntimeConfig *runtime,
     }
   }
   g_ptr_array_free(environment, TRUE);
+  for (guint i = 0; runtime->mounts && i < runtime->mounts->len; i++) {
+    QuockerGuestMount *mount = g_ptr_array_index(runtime->mounts, i);
+    if (!mount || !valid_mount_target(mount->target) ||
+        !append_string(bytes, mount->target, TRUE, error)) {
+      g_byte_array_free(bytes, TRUE);
+      if (error && !*error) {
+        initrd_error(error, "guest volume target is invalid");
+      }
+      return FALSE;
+    }
+    append_be32(bytes, mount->read_only ? 1 : 0);
+  }
   if (!append_string(bytes, runtime->working_directory, FALSE, error) ||
       !append_string(bytes, runtime->user, FALSE, error)) {
     g_byte_array_free(bytes, TRUE);

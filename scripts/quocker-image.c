@@ -462,6 +462,7 @@ gboolean quocker_runtime_config_merge(
   }
   QuockerRuntimeConfig *runtime = g_new0(QuockerRuntimeConfig, 1);
   runtime->argv = string_array_new();
+  runtime->mounts = g_ptr_array_new_with_free_func(g_free);
   runtime->environment = string_map_new();
   GHashTableIter iter;
   gpointer key;
@@ -502,8 +503,75 @@ void quocker_runtime_config_free(QuockerRuntimeConfig *runtime) {
     return;
   }
   g_ptr_array_free(runtime->argv, TRUE);
+  for (guint i = 0; runtime->mounts && i < runtime->mounts->len; i++) {
+    QuockerGuestMount *mount = g_ptr_array_index(runtime->mounts, i);
+    g_free(mount->target);
+    g_free(mount->volume_name);
+    g_free(mount->disk_path);
+  }
+  if (runtime->mounts) {
+    g_ptr_array_free(runtime->mounts, TRUE);
+  }
   g_hash_table_destroy(runtime->environment);
   g_free(runtime->working_directory);
   g_free(runtime->user);
   g_free(runtime);
+}
+
+gboolean quocker_runtime_config_add_mount(QuockerRuntimeConfig *runtime,
+                                          const char *target,
+                                          const char *volume_name,
+                                          gboolean read_only, GError **error) {
+  if (!runtime || !runtime->mounts || !target || target[0] != '/' ||
+      target[1] == '\0' || strlen(target) > 4096) {
+    image_config_error(error,
+                       "guest volume target must be a bounded absolute path");
+    return FALSE;
+  }
+  const char *component = target + 1;
+  for (const char *cursor = component;; cursor++) {
+    if (*cursor == '/' || *cursor == '\0') {
+      gsize length = (gsize)(cursor - component);
+      if (!length || (length == 1 && component[0] == '.') ||
+          (length == 2 && component[0] == '.' && component[1] == '.')) {
+        image_config_error(
+            error, "guest volume target contains an unsafe path component");
+        return FALSE;
+      }
+      if (!*cursor) {
+        break;
+      }
+      component = cursor + 1;
+    }
+  }
+  for (guint i = 0; i < runtime->mounts->len; i++) {
+    QuockerGuestMount *existing = g_ptr_array_index(runtime->mounts, i);
+    if (g_str_equal(existing->target, target)) {
+      image_config_error(error, "guest volume targets must be unique");
+      return FALSE;
+    }
+  }
+  QuockerGuestMount *mount = g_new0(QuockerGuestMount, 1);
+  mount->target = g_strdup(target);
+  mount->volume_name = g_strdup(volume_name ? volume_name : "");
+  mount->read_only = read_only;
+  guint depth = 0;
+  for (const char *cursor = target; *cursor; cursor++) {
+    depth += *cursor == '/';
+  }
+  guint insertion = runtime->mounts->len;
+  while (insertion > 0) {
+    QuockerGuestMount *previous =
+        g_ptr_array_index(runtime->mounts, insertion - 1);
+    guint previous_depth = 0;
+    for (const char *cursor = previous->target; *cursor; cursor++) {
+      previous_depth += *cursor == '/';
+    }
+    if (previous_depth <= depth) {
+      break;
+    }
+    insertion--;
+  }
+  g_ptr_array_insert(runtime->mounts, insertion, mount);
+  return TRUE;
 }

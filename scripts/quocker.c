@@ -13,6 +13,7 @@
 #include "quocker-compose-schema.h"
 #include "quocker-env.h"
 #include "quocker-initrd.h"
+#include "quocker-volume.h"
 #include "quocker-kernel.h"
 #include "quocker-oci.h"
 #include <errno.h>
@@ -2315,6 +2316,21 @@ static gboolean service_overlay_name(const char *filename,
   return match;
 }
 
+static gboolean service_overlay_sidecar_name(const char *filename,
+                                             const char *service) {
+  char *exact = g_strdup_printf("%s.qcow2.base", service);
+  gboolean exact_match = g_str_equal(filename, exact);
+  g_free(exact);
+  if (exact_match) {
+    return TRUE;
+  }
+  char *prefix = g_strdup_printf("%s-", service);
+  gboolean match = g_str_has_prefix(filename, prefix) &&
+                   g_str_has_suffix(filename, ".qcow2.base");
+  g_free(prefix);
+  return match;
+}
+
 static char *find_service_overlay(const char *directory, const char *service) {
   char *selected = state_disk_basename(directory, service);
   if (selected) {
@@ -3011,7 +3027,7 @@ static gboolean unsupported_service_settings(YNode *service, const char *name,
       (g_str_equal(*key, "command") || g_str_equal(*key, "entrypoint") ||
          g_str_equal(*key, "environment") || g_str_equal(*key, "user") ||
          g_str_equal(*key, "working_dir") ||
-         g_str_equal(*key, "env_file"))) {
+         g_str_equal(*key, "env_file") || g_str_equal(*key, "volumes"))) {
       continue;
     }
     YNode *value = map_get(service, *key);
@@ -3039,7 +3055,49 @@ typedef struct QuockerBootAssets {
   const char *architecture;
   const char *manifest_digest;
   const QuockerKernel *kernel;
+  QuockerRuntimeConfig *runtime;
 } QuockerBootAssets;
+
+static gboolean parse_volume_size(const char *value, guint64 *mib_out) {
+  if (!value || !*value || !mib_out) {
+    return FALSE;
+  }
+  char *end = NULL;
+  guint64 size = g_ascii_strtoull(value, &end, 10);
+  if (end == value || size == 0) {
+    return FALSE;
+  }
+  while (g_ascii_isspace(*end)) {
+    end++;
+  }
+  char *unit = g_ascii_strup(end, -1);
+  guint64 multiplier = 1;
+  if (g_str_equal(unit, "") || g_str_equal(unit, "M") ||
+      g_str_equal(unit, "MB") || g_str_equal(unit, "MIB")) {
+    multiplier = 1;
+  } else if (g_str_equal(unit, "G") || g_str_equal(unit, "GB") ||
+             g_str_equal(unit, "GIB")) {
+    multiplier = 1024;
+  } else if (g_str_equal(unit, "T") || g_str_equal(unit, "TB") ||
+             g_str_equal(unit, "TIB")) {
+    multiplier = 1024 * 1024;
+  } else if (g_str_equal(unit, "B")) {
+    if (size % (1024 * 1024)) {
+      g_free(unit);
+      return FALSE;
+    }
+    size /= 1024 * 1024;
+  } else {
+    g_free(unit);
+    return FALSE;
+  }
+  g_free(unit);
+  if (size > G_MAXUINT64 / multiplier) {
+    return FALSE;
+  }
+  *mib_out = size * multiplier;
+  return TRUE;
+}
 
 static gboolean run_qemu_service(const char *project, const char *root,
                                  const char *directory, const char *name,
@@ -3058,6 +3116,44 @@ static gboolean run_qemu_service(const char *project, const char *root,
   if (unsupported_service_settings(service, name, oci_guest)) {
     return FALSE;
   }
+  GPtrArray *volume_drives = g_ptr_array_new_with_free_func(g_free);
+  if (oci_guest && boot->runtime) {
+    guint64 volume_mib = 1024;
+    const char *volume_size = g_getenv("QUOCKER_VOLUME_SIZE");
+    if (volume_size && *volume_size &&
+        !parse_volume_size(volume_size, &volume_mib)) {
+      fail("QUOCKER_VOLUME_SIZE must be an integer size in MiB, GiB, or bytes");
+      g_ptr_array_free(volume_drives, TRUE);
+      return FALSE;
+    }
+    if (volume_mib < 64 || volume_mib > (1ULL << 30)) {
+      fail("QUOCKER_VOLUME_SIZE must be between 64 MiB and 1 TiB");
+      g_ptr_array_free(volume_drives, TRUE);
+      return FALSE;
+    }
+    for (guint i = 0; i < boot->runtime->mounts->len; i++) {
+      QuockerGuestMount *mount = g_ptr_array_index(boot->runtime->mounts, i);
+      GError *volume_error = NULL;
+      if (!quocker_volume_disk_prepare(directory, mount->volume_name,
+                                       volume_mib * 1024 * 1024,
+                                       &mount->disk_path, &volume_error)) {
+        fail("service '%s': could not prepare volume '%s': %s", name,
+             mount->volume_name,
+             volume_error ? volume_error->message : "unknown error");
+        g_clear_error(&volume_error);
+        g_ptr_array_free(volume_drives, TRUE);
+        return FALSE;
+      }
+      if (strchr(mount->disk_path, ',')) {
+        fail("service '%s': volume disk paths cannot contain commas", name);
+        g_ptr_array_free(volume_drives, TRUE);
+        return FALSE;
+      }
+      g_ptr_array_add(
+          volume_drives,
+          g_strdup_printf("file=%s,if=virtio,format=raw", mount->disk_path));
+    }
+  }
   YNode *extension = map_get(service, "x-quocker");
   const char *image = node_string(map_get(extension, "image"));
   if (!image) {
@@ -3071,6 +3167,7 @@ static gboolean run_qemu_service(const char *project, const char *root,
   if (!image || !*image) {
     fail("service '%s': image must name an existing local QEMU disk image",
          name);
+    g_ptr_array_free(volume_drives, TRUE);
     return FALSE;
   }
   char *image_path =
@@ -3080,18 +3177,21 @@ static gboolean run_qemu_service(const char *project, const char *root,
          "not bootable QEMU disks",
          name, image);
     g_free(image_path);
+    g_ptr_array_free(volume_drives, TRUE);
     return FALSE;
   }
   guint64 mem_mib;
   if (!parse_memory(memory, &mem_mib)) {
     fail("service '%s': invalid memory value", name);
     g_free(image_path);
+    g_ptr_array_free(volume_drives, TRUE);
     return FALSE;
   }
   guint cpus = cpus_text ? (guint)g_ascii_strtoull(cpus_text, NULL, 10) : 1;
   if (!cpus) {
     fail("service '%s': CPU count must be positive", name);
     g_free(image_path);
+    g_ptr_array_free(volume_drives, TRUE);
     return FALSE;
   }
   gboolean ports_valid;
@@ -3099,6 +3199,7 @@ static gboolean run_qemu_service(const char *project, const char *root,
   if (!ports_valid) {
     g_free(forwards);
     g_free(image_path);
+    g_ptr_array_free(volume_drives, TRUE);
     return FALSE;
   }
   const char *qemu_default = "qemu-system-x86_64";
@@ -3120,6 +3221,7 @@ static gboolean run_qemu_service(const char *project, const char *root,
     g_free(qemu_img);
     g_free(forwards);
     g_free(image_path);
+    g_ptr_array_free(volume_drives, TRUE);
     return FALSE;
   }
   char *digest_suffix = NULL;
@@ -3185,7 +3287,8 @@ static gboolean run_qemu_service(const char *project, const char *root,
         cache_directory, directory, name, disk, image_path);
     if (!referenced) {
       fail("service '%s': could not protect its OCI base disk from cache "
-           "pruning", name);
+           "pruning",
+           name);
       goto error;
     }
   }
@@ -3212,7 +3315,7 @@ static gboolean run_qemu_service(const char *project, const char *root,
       oci_guest ? g_strdup("console=ttyS0 panic=1 ip=dhcp") : NULL;
   char *netdev =
       *forwards ? g_strdup_printf("user,id=quocker-net,%s", forwards) : NULL;
-  const char *qargv[48];
+  const char *qargv[128];
   guint q = 0;
   qargv[q++] = qemu;
   qargv[q++] = "-name";
@@ -3223,6 +3326,10 @@ static gboolean run_qemu_service(const char *project, const char *root,
   qargv[q++] = cpu_arg;
   qargv[q++] = "-drive";
   qargv[q++] = drive;
+  for (guint i = 0; i < volume_drives->len; i++) {
+    qargv[q++] = "-drive";
+    qargv[q++] = g_ptr_array_index(volume_drives, i);
+  }
   if (oci_guest) {
     if (g_str_equal(boot->architecture, "arm64") ||
         g_str_equal(boot->architecture, "arm")) {
@@ -3330,8 +3437,10 @@ static gboolean run_qemu_service(const char *project, const char *root,
   g_free(qemu);
   g_free(qemu_img);
   g_free(image_path);
+  g_ptr_array_free(volume_drives, TRUE);
   return saved;
 error:
+  g_ptr_array_free(volume_drives, TRUE);
   g_free(disk);
   if (cache_lock_fd >= 0) {
     quocker_oci_cache_unlock(cache_lock_fd);
@@ -3756,9 +3865,9 @@ static gboolean read_service_env_file(YNode *spec, const char *project_root,
   }
   char *absolute = absolute_path(path, project_root);
   GError *error = NULL;
-  gboolean ok = quocker_env_file_read(
-      values, absolute, !required, interpolation_environment, FALSE, !raw,
-      raw, interpolate_text, &error);
+  gboolean ok = quocker_env_file_read(values, absolute, !required,
+                                      interpolation_environment, FALSE, !raw,
+                                      raw, interpolate_text, &error);
   if (!ok) {
     fail("service '%s': %s", service_name,
          error ? error->message : "cannot load env_file");
@@ -3799,12 +3908,231 @@ static gboolean parse_service_env_files(YNode *node, const char *project_root,
   return ok;
 }
 
-static gboolean compose_runtime_config(YNode *service,
-                                       const QuockerImageDefaults *defaults,
-                                       const char *service_name,
-                                       const char *project_root,
-                                       GHashTable *project_environment,
-                                       QuockerRuntimeConfig **runtime_out) {
+static gboolean compose_volume_source_is_bind(const char *source) {
+  return source &&
+         (g_path_is_absolute(source) || g_str_has_prefix(source, "./") ||
+          g_str_has_prefix(source, "../") || g_str_equal(source, ".") ||
+          g_str_equal(source, ".."));
+}
+
+static gboolean add_compose_volume_mount(QuockerRuntimeConfig *runtime,
+                                         YNode *spec, YNode *volume_resources,
+                                         const char *service_name,
+                                         const char *project_name) {
+  const char *source = NULL;
+  const char *target = NULL;
+  const char *type = "volume";
+  gboolean read_only = FALSE;
+  if (spec->kind == NODE_SCALAR) {
+    gchar **parts = g_strsplit(spec->scalar ? spec->scalar : "", ":", 3);
+    guint count = g_strv_length(parts);
+    if (count == 1) {
+      target = parts[0];
+    } else if (count == 2 || count == 3) {
+      source = parts[0];
+      target = parts[1];
+      if (count == 3) {
+        if (g_str_equal(parts[2], "ro")) {
+          read_only = TRUE;
+        } else if (!g_str_equal(parts[2], "rw")) {
+          fail("service '%s': volume mode '%s' is unsupported; use ro or rw",
+               service_name, parts[2]);
+          g_strfreev(parts);
+          return FALSE;
+        }
+      }
+    }
+    if (!target || !*target) {
+      fail("service '%s': invalid volume short syntax", service_name);
+      g_strfreev(parts);
+      return FALSE;
+    }
+    if (source && !*source) {
+      source = NULL;
+    }
+    if (source) {
+      source = g_strdup(source);
+    }
+    target = g_strdup(target);
+    g_strfreev(parts);
+  } else if (spec->kind == NODE_MAPPING) {
+    for (guint i = 0; i < spec->items->len; i++) {
+      YPair *pair = g_ptr_array_index(spec->items, i);
+      const char *key = node_string(pair->key);
+      if (!key ||
+          !(g_str_equal(key, "type") || g_str_equal(key, "source") ||
+            g_str_equal(key, "target") || g_str_equal(key, "read_only") ||
+            g_str_equal(key, "volume"))) {
+        fail("service '%s': unsupported long-form volume field", service_name);
+        return FALSE;
+      }
+    }
+    type = node_string(map_get(spec, "type"));
+    source = node_string(map_get(spec, "source"));
+    target = node_string(map_get(spec, "target"));
+    YNode *read_only_node = map_get(spec, "read_only");
+    const char *read_only_value = node_string(read_only_node);
+    if (read_only_node &&
+        (!read_only_value || (!g_str_equal(read_only_value, "true") &&
+                              !g_str_equal(read_only_value, "false")))) {
+      fail("service '%s': volume read_only must be a boolean", service_name);
+      return FALSE;
+    }
+    read_only = read_only_value && g_str_equal(read_only_value, "true");
+    YNode *volume_options = map_get(spec, "volume");
+    if (volume_options && volume_options->kind == NODE_MAPPING &&
+        volume_options->items->len) {
+      fail("service '%s': volume subpath/nocopy options are not supported yet",
+           service_name);
+      return FALSE;
+    }
+  } else {
+    fail("service '%s': volumes entries must use short or long syntax",
+         service_name);
+    return FALSE;
+  }
+  if (!g_str_equal(type ? type : "volume", "volume")) {
+    fail("service '%s': only Compose volume mounts are supported for OCI VMs; \
+bind and tmpfs mounts are not implemented yet",
+         service_name);
+    if (spec->kind == NODE_SCALAR) {
+      g_free((char *)source);
+      g_free((char *)target);
+    }
+    return FALSE;
+  }
+  if (!target || !*target ||
+      (source && compose_volume_source_is_bind(source))) {
+    fail("service '%s': bind mounts are not implemented yet", service_name);
+    if (spec->kind == NODE_SCALAR) {
+      g_free((char *)source);
+      g_free((char *)target);
+    }
+    return FALSE;
+  }
+  char *logical_name = NULL;
+  if (source) {
+    const char *physical_name = source;
+    YNode *declaration = map_get(volume_resources, source);
+    if (declaration && declaration->kind == NODE_MAPPING) {
+      for (guint i = 0; i < declaration->items->len; i++) {
+        YPair *pair = g_ptr_array_index(declaration->items, i);
+        const char *key = node_string(pair->key);
+        if (!key || !(g_str_equal(key, "name") ||
+                      g_str_equal(key, "driver") ||
+                      g_str_equal(key, "external") ||
+                      g_str_equal(key, "labels"))) {
+          fail("volume '%s' uses unsupported declaration field '%s'", source,
+               key ? key : "<invalid>");
+          if (spec->kind == NODE_SCALAR) {
+            g_free((char *)source);
+            g_free((char *)target);
+          }
+          return FALSE;
+        }
+      }
+      YNode *external = map_get(declaration, "external");
+      const char *external_value = node_string(external);
+      if (external &&
+          (!external_value || g_str_equal(external_value, "true"))) {
+        fail("volume '%s' is external; external volumes are not supported yet",
+             source);
+        if (spec->kind == NODE_SCALAR) {
+          g_free((char *)source);
+          g_free((char *)target);
+        }
+        return FALSE;
+      }
+      const char *driver = node_string(map_get(declaration, "driver"));
+      if (driver && !g_str_equal(driver, "local")) {
+        fail("volume '%s' uses unsupported driver '%s'", source, driver);
+        if (spec->kind == NODE_SCALAR) {
+          g_free((char *)source);
+          g_free((char *)target);
+        }
+        return FALSE;
+      }
+      const char *custom_name = node_string(map_get(declaration, "name"));
+      if (custom_name && *custom_name) {
+        physical_name = custom_name;
+      }
+    }
+    logical_name = g_strdup_printf("%s:%s", project_name, physical_name);
+  } else {
+    logical_name =
+        g_strdup_printf("%s:%s:%s", project_name, service_name, target);
+  }
+  GError *error = NULL;
+  gboolean ok = quocker_runtime_config_add_mount(runtime, target, logical_name,
+                                                 read_only, &error);
+  if (!ok) {
+    fail("service '%s': invalid volume target: %s", service_name,
+         error ? error->message : "invalid path");
+  }
+  g_clear_error(&error);
+  g_free(logical_name);
+  if (spec->kind == NODE_SCALAR) {
+    g_free((char *)source);
+    g_free((char *)target);
+  }
+  return ok;
+}
+
+static gboolean add_service_volume_mounts(QuockerRuntimeConfig *runtime,
+                                          YNode *service,
+                                          const QuockerImageDefaults *defaults,
+                                          YNode *volume_resources,
+                                          const char *service_name,
+                                          const char *project_name) {
+  YNode *volumes = map_get(service, "volumes");
+  if (volumes && volumes->kind != NODE_SEQUENCE) {
+    fail("service '%s': volumes must be a sequence", service_name);
+    return FALSE;
+  }
+  for (guint i = 0; volumes && i < volumes->items->len; i++) {
+    if (!add_compose_volume_mount(runtime, g_ptr_array_index(volumes->items, i),
+                                  volume_resources, service_name,
+                                  project_name)) {
+      return FALSE;
+    }
+  }
+  if (defaults) {
+    GHashTableIter iter;
+    gpointer target;
+    g_hash_table_iter_init(&iter, defaults->volumes);
+    while (g_hash_table_iter_next(&iter, &target, NULL)) {
+      gboolean overridden = FALSE;
+      for (guint i = 0; i < runtime->mounts->len; i++) {
+        QuockerGuestMount *mount = g_ptr_array_index(runtime->mounts, i);
+        overridden |= g_str_equal(mount->target, target);
+      }
+      if (!overridden) {
+        char *anonymous_name = g_strdup_printf("%s:%s:%s", project_name,
+                                               service_name, (char *)target);
+        GError *error = NULL;
+        gboolean ok = quocker_runtime_config_add_mount(
+            runtime, target, anonymous_name, FALSE, &error);
+        if (!ok) {
+          fail("service '%s': image declares an unsupported volume target: %s",
+               service_name, error ? error->message : "invalid path");
+        }
+        g_clear_error(&error);
+        g_free(anonymous_name);
+        if (!ok) {
+          return FALSE;
+        }
+      }
+    }
+  }
+  return TRUE;
+}
+
+static gboolean
+compose_runtime_config(YNode *service, const QuockerImageDefaults *defaults,
+                       const char *service_name, const char *project_name,
+                       YNode *volume_resources, const char *project_root,
+                       GHashTable *project_environment,
+                       QuockerRuntimeConfig **runtime_out) {
   GPtrArray *entrypoint = NULL;
   GPtrArray *command = NULL;
   GHashTable *environment = NULL;
@@ -3848,9 +4176,16 @@ static gboolean compose_runtime_config(YNode *service,
   gboolean ok = quocker_runtime_config_merge(defaults, entrypoint, command,
                                              environment, working_directory,
                                              user, runtime_out, &error);
+  if (ok) {
+    ok = add_service_volume_mounts(*runtime_out, service, defaults,
+                                   volume_resources, service_name,
+                                   project_name);
+  }
   if (!ok) {
-    fail("service '%s': invalid guest runtime config: %s", service_name,
-         error ? error->message : "invalid overrides");
+    if (error) {
+      fail("service '%s': invalid guest runtime config: %s", service_name,
+           error->message);
+    }
   }
   g_clear_error(&error);
   if (entrypoint) {
@@ -4003,6 +4338,8 @@ static char *find_guest_init(void) {
 
 static gboolean prepare_oci_boot(const char *name, const char *directory,
                                  const char *project_root, YNode *service,
+                                 const char *project_name,
+                                 YNode *volume_resources,
                                  PullContext *context,
                                  GHashTable *project_environment,
                                  QuockerOciImage **image_out,
@@ -4039,14 +4376,13 @@ static gboolean prepare_oci_boot(const char *name, const char *directory,
   const char *kernel_id = NULL;
   const char *minimum = NULL;
   GError *error = NULL;
-  if (!defaults || g_hash_table_size(defaults->volumes)) {
-    fail("service '%s': OCI Volumes require explicit VM volume support and "
-         "are not booted yet",
-         name);
+  if (!defaults) {
+    fail("service '%s': OCI image defaults are unavailable", name);
     goto done;
   }
-  if (!compose_runtime_config(service, defaults, name, project_root,
-                             project_environment, runtime_out)) {
+  if (!compose_runtime_config(service, defaults, name, project_name,
+                              volume_resources, project_root,
+                              project_environment, runtime_out)) {
     goto done;
   }
   if (!context->kernel_catalog ||
@@ -4516,6 +4852,7 @@ typedef struct UpContext {
   const char *project;
   const char *root;
   const char *directory;
+  YNode *volume_resources;
   PullContext *pull_context;
   GHashTable *project_environment;
   gboolean dry_run;
@@ -4622,7 +4959,8 @@ static gboolean up_one(const char *name, YNode *service, void *data) {
     return ports_valid;
   }
   pid_t pid = read_pid(ctx->directory, name);
-  if (process_running(pid, ctx->project, name, state_process_start_time(ctx->directory, name))) {
+  if (process_running(pid, ctx->project, name,
+                      state_process_start_time(ctx->directory, name))) {
     g_print("[%s] %s: already running (pid %d)\n", ctx->project, name, pid);
     return TRUE;
   }
@@ -4636,11 +4974,10 @@ static gboolean up_one(const char *name, YNode *service, void *data) {
     char *state = state_path(ctx->directory, name);
     gboolean created = g_file_test(state, G_FILE_TEST_IS_REGULAR);
     g_free(state);
-    char *disk_name = created ? state_disk_basename(ctx->directory, name)
-                              : NULL;
-    char *disk_path = disk_name
-                          ? g_build_filename(ctx->directory, disk_name, NULL)
-                          : NULL;
+    char *disk_name =
+        created ? state_disk_basename(ctx->directory, name) : NULL;
+    char *disk_path =
+        disk_name ? g_build_filename(ctx->directory, disk_name, NULL) : NULL;
     struct stat disk_stat;
     created = created && disk_path && lstat(disk_path, &disk_stat) == 0 &&
               S_ISREG(disk_stat.st_mode);
@@ -4663,9 +5000,10 @@ static gboolean up_one(const char *name, YNode *service, void *data) {
   QuockerKernel *kernel = NULL;
   QuockerRuntimeConfig *runtime = NULL;
   char *initrd_path = NULL;
-  if (!prepare_oci_boot(name, ctx->directory, ctx->root, service,
-                        ctx->pull_context, ctx->project_environment,
-                        &image, &kernel, &runtime, &initrd_path)) {
+  if (!prepare_oci_boot(name, ctx->directory, ctx->root, service, ctx->project,
+                        ctx->volume_resources, ctx->pull_context,
+                        ctx->project_environment, &image, &kernel, &runtime,
+                        &initrd_path)) {
     return FALSE;
   }
   char *root_disk = g_strdup_printf("%s.ext4", image->rootfs_path);
@@ -4674,7 +5012,8 @@ static gboolean up_one(const char *name, YNode *service, void *data) {
                             .initrd_path = initrd_path,
                             .architecture = image->architecture,
                             .manifest_digest = image->manifest_digest,
-                            .kernel = kernel};
+                            .kernel = kernel,
+                            .runtime = runtime};
   gboolean ok = run_qemu_service(ctx->project, ctx->root, ctx->directory, name,
                                  service, &boot);
   g_free(root_disk);
@@ -4688,6 +5027,7 @@ static gboolean up_one(const char *name, YNode *service, void *data) {
 static gboolean run_up_services(YNode *services, Options *opts,
                                 const char *project, const char *root,
                                 const char *directory,
+                                YNode *volume_resources,
                                 GHashTable *project_environment,
                                 gboolean start_only) {
   char *cache = g_build_filename(g_get_user_cache_dir(), "quocker", "oci",
@@ -4701,7 +5041,7 @@ static gboolean run_up_services(YNode *services, Options *opts,
       public_key && *public_key ? public_key
                                 : "/etc/quocker/kernel-catalog.pub",
   };
-  UpContext context = {project, root, directory, &pull_context,
+  UpContext context = {project, root, directory, volume_resources, &pull_context,
                        project_environment, opts->dry_run, start_only};
   PortPreflight preflight = {
       g_ptr_array_new_with_free_func(
@@ -4724,6 +5064,7 @@ static gboolean run_up_services(YNode *services, Options *opts,
 typedef struct DownContext {
   const char *project;
   const char *directory;
+  YNode *services;
   gboolean remove_volumes;
   gboolean dry_run;
 } DownContext;
@@ -4881,9 +5222,8 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
            g_strerror(errno));
       return FALSE;
     }
-    for (guint i = 0; i < 100 &&
-                       process_running(pid, ctx->project, name, start_time);
-         i++) {
+    for (guint i = 0;
+         i < 100 && process_running(pid, ctx->project, name, start_time); i++) {
       g_usleep(100000);
     }
     if (process_running(pid, ctx->project, name, start_time)) {
@@ -4893,8 +5233,8 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
              g_strerror(errno));
         return FALSE;
       }
-      for (guint i = 0; i < 20 &&
-                         process_running(pid, ctx->project, name, start_time);
+      for (guint i = 0;
+           i < 20 && process_running(pid, ctx->project, name, start_time);
            i++) {
         g_usleep(100000);
       }
@@ -4917,7 +5257,8 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
     gboolean removed = FALSE;
     const char *entry;
     while (dir && (entry = g_dir_read_name(dir))) {
-      if (service_overlay_name(entry, name)) {
+      if (service_overlay_name(entry, name) ||
+          service_overlay_sidecar_name(entry, name)) {
         char *disk = g_build_filename(ctx->directory, entry, NULL);
         if (g_unlink(disk) == 0) {
           removed = TRUE;
@@ -4933,10 +5274,10 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
     }
     char *remaining_overlay = find_service_overlay(ctx->directory, name);
     if (!remaining_overlay) {
-      char *cache = g_build_filename(g_get_user_cache_dir(), "quocker", "oci",
-                                     NULL);
-      gboolean unreferenced = quocker_oci_cache_unreference(
-          cache, ctx->directory, name);
+      char *cache =
+          g_build_filename(g_get_user_cache_dir(), "quocker", "oci", NULL);
+      gboolean unreferenced =
+          quocker_oci_cache_unreference(cache, ctx->directory, name);
       g_free(cache);
       if (!unreferenced) {
         g_free(state);
@@ -4945,6 +5286,46 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
       }
     }
     g_free(remaining_overlay);
+    gboolean project_stopped = TRUE;
+    for (guint i = 0; i < ctx->services->items->len; i++) {
+      YPair *pair = g_ptr_array_index(ctx->services->items, i);
+      const char *other_name = node_string(pair->key);
+      if (other_name && !g_str_equal(other_name, name)) {
+        pid_t other_pid = read_pid(ctx->directory, other_name);
+        if (pid_exists(other_pid) ||
+            process_running(
+                other_pid, ctx->project, other_name,
+                state_process_start_time(ctx->directory, other_name))) {
+          project_stopped = FALSE;
+          break;
+        }
+      }
+    }
+    if (project_stopped) {
+      char *volume_directory =
+          g_build_filename(ctx->directory, "volumes", NULL);
+      struct stat volume_directory_stat;
+      GDir *volumes = g_lstat(volume_directory, &volume_directory_stat) == 0 &&
+                              S_ISDIR(volume_directory_stat.st_mode)
+                          ? g_dir_open(volume_directory, 0, NULL)
+                          : NULL;
+      const char *volume_entry;
+      while (volumes && (volume_entry = g_dir_read_name(volumes))) {
+        char *volume_path =
+            g_build_filename(volume_directory, volume_entry, NULL);
+        struct stat volume_stat;
+        if (g_lstat(volume_path, &volume_stat) == 0 &&
+            S_ISREG(volume_stat.st_mode)) {
+          g_unlink(volume_path);
+        }
+        g_free(volume_path);
+      }
+      if (volumes) {
+        g_dir_close(volumes);
+        g_rmdir(volume_directory);
+      }
+      g_free(volume_directory);
+    }
   }
   g_free(state);
   g_free(pidfile);
@@ -5752,7 +6133,7 @@ int main(int argc, char **argv) {
   } else if (g_str_equal(opts.command, "up") ||
              g_str_equal(opts.command, "start")) {
     ok = run_up_services(services, &opts, project_lower, root, directory,
-                         project_environment,
+                         map_get(config, "volumes"), project_environment,
                          g_str_equal(opts.command, "start"));
   } else if (g_str_equal(opts.command, "stop")) {
     ServiceSignalContext context = {project_lower, directory, opts.dry_run,
@@ -5775,11 +6156,12 @@ int main(int argc, char **argv) {
     ok = for_down_services(services, &opts, stop_one, &stop_context);
     if (ok) {
       ok = run_up_services(services, &opts, project_lower, root, directory,
-                           project_environment, TRUE);
+                           map_get(config, "volumes"), project_environment,
+                           TRUE);
     }
   } else if (g_str_equal(opts.command, "down") ||
              g_str_equal(opts.command, "rm")) {
-    DownContext context = {project_lower, directory,
+    DownContext context = {project_lower, directory, services,
                            opts.remove_volumes ||
                                g_str_equal(opts.command, "rm"),
                            opts.dry_run};

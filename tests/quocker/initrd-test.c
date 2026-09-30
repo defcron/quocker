@@ -19,6 +19,7 @@
 static QuockerRuntimeConfig *new_runtime(void) {
   QuockerRuntimeConfig *runtime = g_new0(QuockerRuntimeConfig, 1);
   runtime->argv = g_ptr_array_new_with_free_func(g_free);
+  runtime->mounts = g_ptr_array_new_with_free_func(g_free);
   runtime->environment =
       g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   g_ptr_array_add(runtime->argv, g_strdup("/usr/bin/service"));
@@ -29,15 +30,18 @@ static QuockerRuntimeConfig *new_runtime(void) {
                       g_strdup("first=value"));
   runtime->working_directory = g_strdup("/srv/service");
   runtime->user = g_strdup("1000:100");
+  GError *error = NULL;
+  g_assert_true(quocker_runtime_config_add_mount(runtime, "/data", "shared",
+                                                 FALSE, &error));
+  g_assert_no_error(error);
+  g_assert_true(quocker_runtime_config_add_mount(runtime, "/srv/cache", "cache",
+                                                 TRUE, &error));
+  g_assert_no_error(error);
   return runtime;
 }
 
 static void free_runtime(QuockerRuntimeConfig *runtime) {
-  g_ptr_array_free(runtime->argv, TRUE);
-  g_hash_table_destroy(runtime->environment);
-  g_free(runtime->working_directory);
-  g_free(runtime->user);
-  g_free(runtime);
+  quocker_runtime_config_free(runtime);
 }
 
 static const char *native_oci_architecture(void) {
@@ -60,9 +64,10 @@ static void test_runtime_config_round_trip(void) {
   g_assert_true(quocker_guest_config_encode(runtime, &encoded, &error));
   g_assert_no_error(error);
   g_assert_cmpmem(encoded->data, 4, "QCFG", 4);
-  g_assert_cmpuint(encoded->data[7], ==, 1);
+  g_assert_cmpuint(encoded->data[7], ==, 2);
   g_assert_cmpuint(encoded->data[11], ==, 2);
   g_assert_cmpuint(encoded->data[15], ==, 2);
+  g_assert_cmpuint(encoded->data[19], ==, 2);
 
   GError *spawn_error = NULL;
   char *directory = g_dir_make_tmp("quocker-init-config-XXXXXX", &error);
@@ -84,13 +89,14 @@ static void test_runtime_config_round_trip(void) {
   g_assert_no_error(spawn_error);
   g_assert_true(g_spawn_check_wait_status(status, &spawn_error));
   g_assert_no_error(spawn_error);
-  g_assert_nonnull(strstr(stdout_text, "2 argv, 2 environment values"));
+  g_assert_nonnull(
+      strstr(stdout_text, "2 argv, 2 environment values, 2 volumes"));
   g_free(stdout_text);
   g_free(stderr_text);
   stdout_text = NULL;
   stderr_text = NULL;
 
-  encoded->data[7] = 2;
+  encoded->data[7] = 3;
   g_assert_true(g_file_set_contents(path, (const char *)encoded->data,
                                     encoded->len, &error));
   g_assert_no_error(error);
@@ -108,6 +114,40 @@ static void test_runtime_config_round_trip(void) {
   g_free(path);
   g_free(directory);
   g_byte_array_unref(encoded);
+  free_runtime(runtime);
+}
+
+static void test_guest_mount_paths(void) {
+  QuockerRuntimeConfig *runtime = new_runtime();
+  GError *error = NULL;
+  g_assert_true(quocker_runtime_config_add_mount(runtime, "/var/lib/db",
+                                                 "nested", FALSE, &error));
+  g_assert_no_error(error);
+  g_assert_true(quocker_runtime_config_add_mount(runtime, "/var", "parent",
+                                                 FALSE, &error));
+  g_assert_no_error(error);
+  gint parent_index = -1;
+  gint child_index = -1;
+  for (guint i = 0; i < runtime->mounts->len; i++) {
+    QuockerGuestMount *mount = g_ptr_array_index(runtime->mounts, i);
+    if (g_str_equal(mount->target, "/var")) {
+      parent_index = i;
+    } else if (g_str_equal(mount->target, "/var/lib/db")) {
+      child_index = i;
+    }
+  }
+  g_assert_cmpint(parent_index, >=, 0);
+  g_assert_cmpint(child_index, >, parent_index);
+  g_assert_false(quocker_runtime_config_add_mount(runtime, "/srv/../escape",
+                                                  "invalid", FALSE, &error));
+  g_assert_error(error,
+                 g_quark_from_static_string("quocker-image-config-error"), 1);
+  g_clear_error(&error);
+  g_assert_false(
+      quocker_runtime_config_add_mount(runtime, "/data", "dup", TRUE, &error));
+  g_assert_error(error,
+                 g_quark_from_static_string("quocker-image-config-error"), 1);
+  g_clear_error(&error);
   free_runtime(runtime);
 }
 
@@ -197,6 +237,7 @@ static void test_initrd_appends_guest_archive(void) {
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/quocker/initrd/config", test_runtime_config_round_trip);
+  g_test_add_func("/quocker/initrd/volume-paths", test_guest_mount_paths);
   g_test_add_func("/quocker/initrd/archive", test_initrd_appends_guest_archive);
   return g_test_run();
 }
