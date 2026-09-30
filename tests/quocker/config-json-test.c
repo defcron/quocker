@@ -1,5 +1,6 @@
 #include <glib.h>
 #include <json-glib/json-glib.h>
+#include <string.h>
 
 int main(int argc, char **argv) {
   g_assert_cmpint(argc, ==, 2);
@@ -7,6 +8,7 @@ int main(int argc, char **argv) {
   g_assert_nonnull(cli);
   g_unsetenv("QUOCKER_CONFIG_INTERPOLATION_MISSING");
   g_unsetenv("QUOCKER_CONFIG_UNRESOLVED");
+  g_setenv("QUOCKER_VARIABLE_REQUIRED", "provided", TRUE);
   char *arguments[] = {(char *)cli, (char *)"-f", argv[1], (char *)"config",
                        (char *)"--format", (char *)"json", NULL};
   gchar *output = NULL;
@@ -279,6 +281,54 @@ int main(int argc, char **argv) {
   long_mount = json_array_get_object_element(mounts, 1);
   g_assert_cmpstr(json_object_get_string_member(long_mount, "source"), ==,
                   "../long-volume");
+
+  char *variables_arguments[] = {
+      (char *)cli, (char *)"-f", argv[1], (char *)"config",
+      (char *)"--variables", NULL};
+  g_unsetenv("QUOCKER_VARIABLE_REQUIRED");
+  g_free(output);
+  g_free(stderr_text);
+  output = NULL;
+  stderr_text = NULL;
+  status = 0;
+  g_assert_true(g_spawn_sync(NULL, variables_arguments, NULL, G_SPAWN_DEFAULT,
+                             NULL, NULL, &output, &stderr_text, &status,
+                             &error));
+  g_assert_no_error(error);
+  g_assert_true(g_spawn_check_wait_status(status, &error));
+  g_assert_no_error(error);
+  g_assert_nonnull(strstr(output, "NAME"));
+  g_assert_nonnull(strstr(output, "REQUIRED"));
+  g_assert_nonnull(strstr(output,
+                          "QUOCKER_CONFIG_INTERPOLATION_SET"));
+  g_assert_nonnull(strstr(output, "QUOCKER_VARIABLE_REQUIRED"));
+  g_assert_nonnull(strstr(output, "true"));
+  g_assert_nonnull(strstr(output, "fallback"));
+  g_assert_nonnull(strstr(output, "yes"));
+
+  char *fixture_directory_for_variables = g_path_get_dirname(argv[1]);
+  char *variables_fixture =
+      g_build_filename(fixture_directory_for_variables,
+                       "config-variables.yaml", NULL);
+  char *included_variables_arguments[] = {
+      (char *)cli, (char *)"-f", variables_fixture, (char *)"config",
+      (char *)"--variables", NULL};
+  g_free(output);
+  g_free(stderr_text);
+  output = NULL;
+  stderr_text = NULL;
+  status = 0;
+  g_assert_true(g_spawn_sync(NULL, included_variables_arguments, NULL,
+                             G_SPAWN_DEFAULT, NULL, NULL, &output,
+                             &stderr_text, &status, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_spawn_check_wait_status(status, &error));
+  g_assert_no_error(error);
+  g_assert_nonnull(strstr(output, "QUOCKER_IMAGE_TAG"));
+  g_assert_nonnull(strstr(output, "QUOCKER_INCLUDE_TAG"));
+  g_assert_nonnull(strstr(output, "QUOCKER_BASE_LABEL"));
+  g_free(variables_fixture);
+  g_free(fixture_directory_for_variables);
 
   g_object_unref(parser);
   g_free(stderr_text);

@@ -1,0 +1,9 @@
+name: config-variables
+include:
+  - path: config-variables-included.yaml
+services:
+  main:
+    image: alpine:${QUOCKER_IMAGE_TAG:-latest}
+    extends:
+      file: config-variables-base.yaml
+      service: base

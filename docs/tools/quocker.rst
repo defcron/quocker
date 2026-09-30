@@ -182,12 +182,13 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
        `Compose logs reference <https://docs.docker.com/reference/cli/docker/compose/logs/>`_.
    * - ``config``
      - ``--format yaml|json``, ``-o``/``--output FILE``, ``--quiet``,
-       ``--environment``, ``--services``, ``--profiles``, ``--images``,
+       ``--environment``, ``--variables``, ``--services``, ``--profiles``,
+       ``--images``,
        ``--volumes``, ``--networks``, ``--models``, ``--no-env-resolution``,
        ``--no-interpolate``, partial ``--no-path-resolution``, and
        Quocker-specific ``--capabilities``.
-     - ``--hash``, ``--lock-image-digests``, ``--variables``,
-       ``--no-consistency``, ``--no-normalize``, and image-digest resolution.
+     - ``--hash``, ``--lock-image-digests``, ``--no-consistency``,
+       ``--no-normalize``, and image-digest resolution.
        See the
        `Compose config reference <https://docs.docker.com/reference/cli/docker/compose/config/>`_.
    * - ``start``, ``stop``, ``restart``, ``pause``, ``unpause``
@@ -300,6 +301,10 @@ emitted once.
 ``config --environment`` prints the merged process and
 environment-file values used for interpolation as sorted ``KEY=VALUE`` lines;
 process environment values take precedence over explicit env-file values.
+``config --variables`` reports unique interpolation variable names referenced
+by the model, including whether a variable is required and any default or
+alternate values declared with Compose's ``-``, ``:-``, ``+``, ``:+``, ``?``,
+or ``:?`` operators. It also scans included and extended Compose files.
 By default, rendered service ``env_file`` entries are read in order and merged
 into ``environment``; service ``environment`` entries take precedence,
 including explicit empty and unresolved values. The rendered service omits

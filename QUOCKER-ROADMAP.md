@@ -398,6 +398,9 @@ in user-facing compatibility promises.
    declarations with absolute paths and skips reading their contents.
    `--no-interpolate` preserves Compose variable expressions and skips service
    env-file resolution while still merging and validating the Compose model.
+   `config --variables` reports referenced variable names, required markers,
+   default and alternate values, including references found in included and
+   extended Compose files.
    `--no-path-resolution` preserves service env-file paths, local build and
    additional contexts, short and long bind sources, top-level config and
    secret file paths, and included or extended model paths; broader path-valued

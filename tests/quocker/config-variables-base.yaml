@@ -1,0 +1,4 @@
+services:
+  base:
+    labels:
+      app: ${QUOCKER_BASE_LABEL:-base}

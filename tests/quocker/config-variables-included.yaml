@@ -1,0 +1,3 @@
+services:
+  included:
+    image: alpine:${QUOCKER_INCLUDE_TAG:-included}

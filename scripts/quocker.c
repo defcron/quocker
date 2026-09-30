@@ -71,6 +71,18 @@ struct YNode {
   GPtrArray *items;
 };
 
+typedef struct ComposeVariable {
+  char *name;
+  char *default_value;
+  char *alternate_value;
+  gboolean has_default;
+  gboolean has_alternate;
+  gboolean required;
+} ComposeVariable;
+
+static GPtrArray *compose_variables;
+static GHashTable *compose_variable_index;
+
 typedef struct Options {
   GPtrArray *files;
   GPtrArray *env_files;
@@ -822,7 +834,7 @@ static gboolean resolve_project_name(YNode *config, const char *root,
 }
 
 static gboolean interpolate_compose_values(YNode *config,
-                                            GHashTable *environment) {
+                                           GHashTable *environment) {
   for (guint i = 0; i < config->items->len; i++) {
     YPair *pair = g_ptr_array_index(config->items, i);
     if (g_strcmp0(node_string(pair->key), "name") != 0 &&
@@ -831,6 +843,110 @@ static gboolean interpolate_compose_values(YNode *config,
     }
   }
   return TRUE;
+}
+
+static void compose_variable_free(gpointer data) {
+  ComposeVariable *variable = data;
+  g_free(variable->name);
+  g_free(variable->default_value);
+  g_free(variable->alternate_value);
+  g_free(variable);
+}
+
+static ComposeVariable *compose_variable_get(const char *name) {
+  if (!compose_variables || !compose_variable_index) {
+    return NULL;
+  }
+  ComposeVariable *variable = g_hash_table_lookup(compose_variable_index, name);
+  if (variable) {
+    return variable;
+  }
+  variable = g_new0(ComposeVariable, 1);
+  variable->name = g_strdup(name);
+  g_ptr_array_add(compose_variables, variable);
+  g_hash_table_insert(compose_variable_index, variable->name, variable);
+  return variable;
+}
+
+static void compose_variables_collect_text(const char *text, guint depth) {
+  if (!text || depth > 64 || !compose_variables) {
+    return;
+  }
+  for (const char *p = text; *p;) {
+    if (*p != '$') {
+      p++;
+      continue;
+    }
+    if (p[1] == '$') {
+      p += 2;
+      continue;
+    }
+    gboolean braced = p[1] == '{';
+    const char *name_start = p + (braced ? 2 : 1);
+    if (!(g_ascii_isalpha(*name_start) || *name_start == '_')) {
+      p++;
+      continue;
+    }
+    const char *name_end = name_start;
+    while (g_ascii_isalnum(*name_end) || *name_end == '_') {
+      name_end++;
+    }
+    const char *end = braced ? interpolation_end(name_end) : name_end;
+    if (!end) {
+      p++;
+      continue;
+    }
+    const char *operator = NULL;
+    const char *operand = NULL;
+    if (braced) {
+      if (name_end[0] == ':' && strchr("-?+", name_end[1])) {
+        operator = name_end;
+        operand = name_end + 2;
+      } else if (strchr("-?+", name_end[0])) {
+        operator = name_end;
+        operand = name_end + 1;
+      }
+    }
+    char *name = g_strndup(name_start, name_end - name_start);
+    ComposeVariable *variable = compose_variable_get(name);
+    g_free(name);
+    if (operator) {
+      char op = operator[operator[0] == ':' ? 1 : 0];
+      char *value = g_strndup(operand, end - operand);
+      if (op == '-' && !variable->has_default) {
+        variable->default_value = g_strdup(value);
+        variable->has_default = TRUE;
+      } else if (op == '+' && !variable->has_alternate) {
+        variable->alternate_value = g_strdup(value);
+        variable->has_alternate = TRUE;
+      } else if (op == '?') {
+        variable->required = TRUE;
+      }
+      compose_variables_collect_text(value, depth + 1);
+      g_free(value);
+    }
+    p = braced ? end + 1 : end;
+  }
+}
+
+static void compose_variables_collect_node(YNode *node) {
+  if (!compose_variables || !node) {
+    return;
+  }
+  if (node->kind == NODE_SCALAR) {
+    if (!yaml_null(node)) {
+      compose_variables_collect_text(node->scalar, 0);
+    }
+  } else if (node->kind == NODE_SEQUENCE) {
+    for (guint i = 0; i < node->items->len; i++) {
+      compose_variables_collect_node(g_ptr_array_index(node->items, i));
+    }
+  } else {
+    for (guint i = 0; i < node->items->len; i++) {
+      YPair *pair = g_ptr_array_index(node->items, i);
+      compose_variables_collect_node(pair->value);
+    }
+  }
 }
 
 static gboolean yaml_parse_text(const char *text, const char *source_file,
@@ -876,6 +992,9 @@ static gboolean yaml_parse_text(const char *text, const char *source_file,
     yaml_event_delete(&trailing_event);
   }
   yaml_parser_delete(&parser);
+  if (ok) {
+    compose_variables_collect_node(*root);
+  }
   return ok;
 }
 
@@ -1825,6 +1944,33 @@ static gboolean config_write_environment(GHashTable *environment) {
     g_print("%s\n", (char *)g_ptr_array_index(values, i));
   }
   g_ptr_array_free(values, TRUE);
+  return TRUE;
+}
+
+static gboolean config_write_variables(void) {
+  gsize max_name_length = strlen("NAME");
+  gsize max_default_length = strlen("DEFAULT VALUE");
+  for (guint i = 0; compose_variables && i < compose_variables->len; i++) {
+    ComposeVariable *variable = g_ptr_array_index(compose_variables, i);
+    max_name_length = MAX(max_name_length, strlen(variable->name));
+    max_default_length =
+        MAX(max_default_length,
+            variable->default_value ? strlen(variable->default_value) : 0);
+  }
+  gsize name_width = MAX((gsize)20,
+                         ((max_name_length + 20) / 20) * 20 - 1);
+  gsize default_width = MAX((gsize)20,
+                            ((max_default_length + 19) / 20) * 20);
+  g_print("%-*s%-20s%-20s%s\n", (int)name_width, "NAME", "REQUIRED",
+          "DEFAULT VALUE", "ALTERNATE VALUE");
+  for (guint i = 0; compose_variables && i < compose_variables->len; i++) {
+    ComposeVariable *variable = g_ptr_array_index(compose_variables, i);
+    g_print("%-*s%-20s%-*s%s\n", (int)name_width, variable->name,
+            variable->required ? "true" : "false",
+            (int)default_width,
+            variable->default_value ? variable->default_value : "",
+            variable->alternate_value ? variable->alternate_value : "");
+  }
   return TRUE;
 }
 
@@ -2844,6 +2990,11 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
                                     YNode **config,
                                     GHashTable **environment_out,
                                     char **project_name_out) {
+  g_clear_pointer(&compose_variable_index, g_hash_table_destroy);
+  g_clear_pointer(&compose_variables, g_ptr_array_unref);
+  compose_variables =
+      g_ptr_array_new_with_free_func(compose_variable_free);
+  compose_variable_index = g_hash_table_new(g_str_hash, g_str_equal);
   GHashTable *environment =
       g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   /* Copy process environment explicitly; GLib owns the returned vector. */
@@ -7701,6 +7852,7 @@ static void usage(FILE *file) {
           "  config -o, --output FILE   Write rendered config to a file\n"
           "  config --services|--profiles|--images  List config entries\n"
           "  config --volumes|--networks|--models List declared resources\n"
+          "  config --variables        List interpolation variables\n"
           "  config --capabilities       Report service-field support\n"
           "  config --environment        Print interpolation environment\n"
           "  config --no-env-resolution Retain normalized env_file paths\n"
@@ -8018,6 +8170,7 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
                 g_str_equal(arg, "--profiles") ||
                 g_str_equal(arg, "--images") ||
                 g_str_equal(arg, "--models") ||
+                g_str_equal(arg, "--variables") ||
                 g_str_equal(arg, "--volumes") ||
                 g_str_equal(arg, "--networks") ||
                 g_str_equal(arg, "--capabilities"))) {
@@ -8826,11 +8979,17 @@ int main(int argc, char **argv) {
   YNode *config = NULL;
   GHashTable *project_environment = NULL;
   char *project_lower = NULL;
+  gboolean config_variables =
+      g_str_equal(opts.command, "config") &&
+      g_strcmp0(opts.config_list_mode, "variables") == 0;
   if (!parse_compose_files(files, root, opts.env_files, opts.project_name,
-                           opts.config_no_interpolate,
+                           opts.config_no_interpolate || config_variables,
                            opts.config_no_path_resolution,
                            &config, &project_environment, &project_lower)) {
     return 1;
+  }
+  if (config_variables) {
+    return config_write_variables() ? 0 : 1;
   }
   if (g_str_equal(opts.command, "config") &&
       !resolve_config_service_env_files(config, root, project_environment,
