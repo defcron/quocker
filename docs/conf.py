@@ -297,6 +297,9 @@ latex_documents = [
 # -- Options for manual page output ---------------------------------------
 # Individual manual/conf.py can override this to create man pages
 man_pages = [
+    ('tools/quocker', 'quocker',
+     'Quocker VM Orchestrator',
+     ['The QEMU Project developers'], 1),
     ('interop/qemu-ga', 'qemu-ga',
      'QEMU Guest Agent',
      ['Michael Roth <mdroth@linux.vnet.ibm.com>'], 8),

@@ -33,6 +33,7 @@ if build_docs
   SPHINX_ARGS += ['-Dversion=' + meson.project_version(), '-Drelease=' + get_option('pkgversion')]
 
   man_pages = {
+        'quocker.1': (is_variable('quocker') ? 'man1' : ''),
         'qemu-ga.8': (have_ga ? 'man8' : ''),
         'qemu-ga-ref.7': (have_ga ? 'man7' : ''),
         'qemu-qmp-ref.7': 'man7',

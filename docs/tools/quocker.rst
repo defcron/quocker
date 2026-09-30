@@ -24,6 +24,9 @@ and for creating persistent volume disks.
 It also requires ``qemu-system-x86_64`` and ``qemu-img`` at runtime. QEMU
 executables can be selected with the ``QUOCKER_QEMU`` and
 ``QUOCKER_QEMU_IMG`` environment variables.
+When Quocker is enabled, installation adds Bash completion at
+``share/bash-completion/completions/quocker``. If the QEMU documentation build
+is enabled, it also generates and installs ``quocker(1)``.
 
 Compose file
 ------------

@@ -1,0 +1,41 @@
+_quocker() {
+    local cur prev commands options
+    COMPREPLY=()
+    cur=${COMP_WORDS[COMP_CWORD]}
+    prev=${COMP_WORDS[COMP_CWORD-1]}
+
+    commands='up down ps logs config start stop restart kill pause unpause rm pull build create run exec cp port events top wait images ls version volume prune compose kernel'
+    options='-f --file -p --project-name --project-directory --env-file --profile --help --version --dry-run --short'
+
+    case $prev in
+        -f|--file|--project-name|-p|--project-directory|--env-file|--profile)
+            return
+            ;;
+        -s|--signal)
+            COMPREPLY=( $(compgen -W 'HUP INT QUIT KILL TERM USR1 USR2' -- "$cur") )
+            return
+            ;;
+    esac
+
+    if [[ $COMP_CWORD -eq 1 || ${COMP_WORDS[1]} == compose ]]; then
+        COMPREPLY=( $(compgen -W "$commands $options" -- "$cur") )
+        return
+    fi
+
+    case ${COMP_WORDS[1]} in
+        config)
+            COMPREPLY=( $(compgen -W '--format --environment --services --profiles --images --volumes --networks --quiet' -- "$cur") )
+            ;;
+        kill)
+            COMPREPLY=( $(compgen -W '-s --signal' -- "$cur") )
+            ;;
+        down|rm|volume)
+            COMPREPLY=( $(compgen -W '--volumes --dry-run ls df inspect' -- "$cur") )
+            ;;
+        *)
+            COMPREPLY=( $(compgen -W "$options" -- "$cur") )
+            ;;
+    esac
+}
+
+complete -F _quocker quocker

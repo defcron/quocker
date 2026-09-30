@@ -50,6 +50,9 @@ if not get_option('quocker').disabled()
                            '-DQUOCKER_SCHEMA_INSTALL_PATH="' + quocker_schema_install_path + '"',
                          ],
                          install: true)
+    install_data('quocker.bash-completion',
+      install_dir: get_option('datadir') / 'bash-completion' / 'completions',
+      rename: 'quocker')
 
     test('quocker-help', quocker, args: ['--help'], suite: ['quocker'])
     quocker_version_test = executable(

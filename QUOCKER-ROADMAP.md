@@ -282,8 +282,10 @@ in user-facing compatibility promises.
    process management. Keep configuration parsing separate from side effects.
 5. **Partially implemented:** `quocker version`, `version --short`, and the
    `--version` alias report the Quocker interface version and build's QEMU base
-   version. Structured diagnostics, logging levels, full exit-code
-   conventions, shell completions, and man-page generation remain.
+   version. A Bash completion script installs with the optional target, and
+   Sphinx generates `quocker(1)` when docs are enabled. Structured diagnostics,
+   logging levels, full exit-code conventions, and other shell completions
+   remain.
 6. Add licensing, contribution, code ownership, and security-review notes for
    the new files.
 
