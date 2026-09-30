@@ -405,7 +405,10 @@ in user-facing compatibility promises.
    `--remove-orphans`; cleanup uses the same guarded shutdown path as declared
    VMs. Dry runs display orphan cleanup without changing saved state. Removing
    an orphan deletes its VM state but preserves its disk unless ``--volumes``
-   is requested.
+   is requested. `rm` removes stopped VM state and its service overlay, refuses
+   running VMs unless `--stop` is passed, supports a stop timeout, and
+   preserves named project volumes; `rm --volumes` is rejected until anonymous
+   and named VM disks can be distinguished safely.
    The option inventory for less common commands still needs exact
    option-by-option coverage.
 2. Complete core commands and their normal flags: `up`, `down`, `ps`, `logs`,

@@ -195,6 +195,15 @@ static void test_stop_preserves_vm_state(void) {
   g_free(state);
 
   gchar *output = NULL;
+  g_assert_false(run_cli(cli, directory, compose, "rm", &output));
+  g_free(output);
+  output = NULL;
+  g_assert_true(g_file_test(state_path, G_FILE_TEST_IS_REGULAR));
+  g_assert_false(run_cli_for_project(cli, directory, compose, "lifecycle",
+                                     "app", "rm", "--volumes", &output));
+  g_free(output);
+  output = NULL;
+  g_assert_true(g_file_test(state_path, G_FILE_TEST_IS_REGULAR));
   g_assert_true(run_cli(cli, directory, compose, "stop", &output));
   g_assert_nonnull(strstr(output, "app: stopped"));
   g_free(output);
@@ -362,10 +371,13 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_nonnull(strstr(output, "app: stopped"));
   g_free(output);
   output = NULL;
-  g_assert_true(run_cli(cli, directory, compose, "down", &output));
+  g_assert_true(run_cli(cli, directory, compose, "rm", &output));
   g_free(output);
   g_assert_false(g_file_test(state_path, G_FILE_TEST_EXISTS));
   g_assert_false(g_file_test(pidfile, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(overlay_disk, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(overlay_sidecar, G_FILE_TEST_EXISTS));
+  g_assert_true(g_file_test(base_disk, G_FILE_TEST_IS_REGULAR));
 
   char *fake_argv_path = g_build_filename(directory, "fake-qemu-argv", NULL);
   g_setenv("QUOCKER_FAKE_QEMU_ARGV_FILE", fake_argv_path, TRUE);
@@ -411,11 +423,38 @@ static void test_stop_preserves_vm_state(void) {
   output = NULL;
   g_assert_true(run_cli(cli, directory, compose, "up", &output));
   g_free(output);
-  output = NULL;
-  g_assert_true(run_cli_for_project(cli, directory, compose, "lifecycle",
-                                    "app", "down", "--timeout=0", &output));
-  g_free(output);
+  char *rm_volumes_directory =
+      g_build_filename(state_directory, "volumes", NULL);
+  char *named_volume_disk =
+      g_build_filename(rm_volumes_directory, "named.ext4", NULL);
+  g_assert_cmpint(g_mkdir(rm_volumes_directory, 0700), ==, 0);
+  g_assert_true(g_file_set_contents(named_volume_disk, "keep", -1, &error));
+  g_assert_no_error(error);
   g_unsetenv("QUOCKER_FAKE_QEMU_IGNORE_TERM");
+  output = NULL;
+  char *rm_stop_arguments[] = {
+      (char *)cli, (char *)"--project-directory", directory,
+      (char *)"--project-name", (char *)"lifecycle", (char *)"-f",
+      compose, (char *)"rm", (char *)"--stop", (char *)"--timeout=0",
+      (char *)"app", NULL};
+  gchar *rm_stderr = NULL;
+  gint rm_status = 0;
+  GError *rm_error = NULL;
+  g_assert_true(g_spawn_sync(NULL, rm_stop_arguments, NULL, G_SPAWN_DEFAULT,
+                             NULL, NULL, &output, &rm_stderr, &rm_status,
+                             &rm_error));
+  g_assert_no_error(rm_error);
+  g_assert_true(g_spawn_check_wait_status(rm_status, &rm_error));
+  g_assert_no_error(rm_error);
+  g_assert_nonnull(strstr(output, "app: stopped"));
+  g_assert_false(g_file_test(state_path, G_FILE_TEST_EXISTS));
+  g_assert_true(g_file_test(named_volume_disk, G_FILE_TEST_IS_REGULAR));
+  g_free(output);
+  g_free(rm_stderr);
+  g_assert_cmpint(g_unlink(named_volume_disk), ==, 0);
+  g_assert_cmpint(g_rmdir(rm_volumes_directory), ==, 0);
+  g_free(named_volume_disk);
+  g_free(rm_volumes_directory);
   assert_stop_timeout_short_option(cli, directory, compose);
   g_unsetenv("QUOCKER_FAKE_QEMU_ARGV_FILE");
 

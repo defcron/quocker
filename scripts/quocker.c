@@ -90,6 +90,8 @@ typedef struct Options {
   int signal_number;
   gboolean remove_volumes;
   gboolean remove_orphans;
+  gboolean rm_stop;
+  gboolean shutdown_timeout_set;
   gboolean follow;
   gboolean logs_tail_set;
   gboolean logs_tail_all;
@@ -6238,10 +6240,19 @@ typedef struct DownContext {
   const char *project;
   const char *directory;
   YNode *services;
+  gboolean remove_overlay;
   gboolean remove_volumes;
   gboolean dry_run;
   guint shutdown_timeout_seconds;
 } DownContext;
+
+typedef struct RmContext {
+  const char *project;
+  const char *directory;
+  YNode *services;
+  gboolean stop_running;
+  guint shutdown_timeout_seconds;
+} RmContext;
 
 typedef struct ServiceSignalContext {
   const char *project;
@@ -6417,7 +6428,7 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
   qmp_socket_remove(ctx->directory, name);
   g_unlink(state);
   g_unlink(pidfile);
-  if (ctx->remove_volumes) {
+  if (ctx->remove_overlay) {
     GDir *dir = g_dir_open(ctx->directory, 0, NULL);
     gboolean removed = FALSE;
     const char *entry;
@@ -6451,6 +6462,8 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
       }
     }
     g_free(remaining_overlay);
+  }
+  if (ctx->remove_volumes) {
     gboolean project_stopped = TRUE;
     for (guint i = 0; i < ctx->services->items->len; i++) {
       YPair *pair = g_ptr_array_index(ctx->services->items, i);
@@ -6481,6 +6494,26 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
   g_free(state);
   g_free(pidfile);
   return TRUE;
+}
+
+static gboolean rm_one(const char *name, YNode *service, void *data) {
+  RmContext *ctx = data;
+  pid_t pid = read_pid(ctx->directory, name);
+  guint64 start_time = state_process_start_time(ctx->directory, name);
+  if (process_running(pid, ctx->project, name, start_time) &&
+      !ctx->stop_running) {
+    fail("service '%s' is running; use 'rm --stop' to stop it before removal",
+         name);
+    return FALSE;
+  }
+  DownContext down_context = {ctx->project,
+                              ctx->directory,
+                              ctx->services,
+                              TRUE,
+                              FALSE,
+                              FALSE,
+                              ctx->shutdown_timeout_seconds};
+  return down_one(name, service, &down_context);
 }
 
 static gboolean remove_orphan_services(const char *project,
@@ -6525,8 +6558,8 @@ static gboolean remove_orphan_services(const char *project,
   }
   g_dir_close(saved);
   g_ptr_array_sort(orphans, compare_string_pointers);
-  DownContext context = {project, directory, services, remove_volumes, dry_run,
-                         shutdown_timeout_seconds};
+  DownContext context = {project, directory, services, remove_volumes,
+                         remove_volumes, dry_run, shutdown_timeout_seconds};
   gboolean ok = TRUE;
   for (guint i = 0; ok && i < orphans->len; i++) {
     ok = down_one(g_ptr_array_index(orphans, i), NULL, &context);
@@ -7075,6 +7108,7 @@ static void usage(FILE *file) {
           "      --profile PROFILE       Enable a service profile\n\n"
           "  up --wait [--wait-timeout SEC] Wait for guest workloads to be ready\n"
           "  up|down --remove-orphans Remove saved VMs absent from this file\n"
+          "  rm --stop               Stop running VMs before removing them\n"
           "  stop|restart|down -t, --timeout SEC Graceful stop timeout\n"
           "  ps -a, --all              Include stopped saved VMs\n"
           "  ps --orphans[=BOOL]       Include undeclared saved VMs (default true)\n"
@@ -7227,9 +7261,10 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       gboolean supports_timeout =
           g_str_equal(opts->command, "stop") ||
           g_str_equal(opts->command, "restart") ||
-          g_str_equal(opts->command, "down");
+          g_str_equal(opts->command, "down") ||
+          g_str_equal(opts->command, "rm");
       if (!supports_timeout) {
-        fail("--timeout is supported with stop, restart, and down");
+        fail("--timeout is supported with stop, restart, down, and rm");
         return FALSE;
       }
       const char *value = NULL;
@@ -7245,6 +7280,7 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
         return FALSE;
       }
       opts->shutdown_timeout_seconds = (guint)seconds;
+      opts->shutdown_timeout_set = TRUE;
     } else if (opts->command && g_str_equal(arg, "--dry-run") &&
                (g_str_equal(opts->command, "up") ||
                 g_str_equal(opts->command, "start") ||
@@ -7262,8 +7298,14 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
         fail("kill requires a supported signal name or number");
         return FALSE;
       }
-    } else if (opts->command && g_str_equal(arg, "-v")) {
+    } else if (opts->command && g_str_equal(arg, "-v") &&
+               (g_str_equal(opts->command, "down") ||
+                g_str_equal(opts->command, "rm"))) {
       opts->remove_volumes = TRUE;
+    } else if (opts->command &&
+               (g_str_equal(arg, "-s") || g_str_equal(arg, "--stop")) &&
+               g_str_equal(opts->command, "rm")) {
+      opts->rm_stop = TRUE;
     } else if (opts->command && g_str_equal(arg, "--remove-orphans") &&
                (g_str_equal(opts->command, "up") ||
                 g_str_equal(opts->command, "down"))) {
@@ -7301,7 +7343,8 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(opts->command, "logs") &&
                g_str_equal(arg, "--no-log-prefix")) {
       opts->logs_no_prefix = TRUE;
-    } else if (opts->command && g_str_equal(arg, "-f") &&
+    } else if (opts->command &&
+               (g_str_equal(arg, "-f") || g_str_equal(arg, "--force")) &&
                g_str_equal(opts->command, "rm")) {
       /* Docker Compose's rm --force is accepted as a no-op here. */
     } else if (opts->command && g_str_equal(opts->command, "config") &&
@@ -7437,7 +7480,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
         fail("port accepts one service and one private port argument");
         return FALSE;
       }
-    } else if (opts->command && g_str_equal(arg, "--volumes")) {
+    } else if (opts->command && g_str_equal(arg, "--volumes") &&
+               (g_str_equal(opts->command, "down") ||
+                g_str_equal(opts->command, "rm"))) {
       opts->remove_volumes = TRUE;
     } else if (opts->command && !g_str_has_prefix(arg, "-")) {
       g_ptr_array_add(opts->services, g_strdup(arg));
@@ -7468,7 +7513,8 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       (opts->services->len || opts->files->len || opts->env_files->len ||
        opts->project_name || opts->project_directory || opts->port_spec ||
        opts->quiet || opts->detach || opts->dry_run || opts->remove_volumes ||
-       opts->remove_orphans || opts->follow || opts->wait_for_ready ||
+       opts->remove_orphans || opts->rm_stop || opts->shutdown_timeout_set ||
+       opts->follow || opts->wait_for_ready ||
        opts->wait_timeout_set)) {
     fail("version accepts only the optional --short flag");
     return FALSE;
@@ -7479,6 +7525,16 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
   }
   if (opts->wait_timeout_set && !opts->wait_for_ready) {
     fail("--wait-timeout requires --wait");
+    return FALSE;
+  }
+  if (g_str_equal(opts->command, "rm") && opts->shutdown_timeout_set &&
+      !opts->rm_stop) {
+    fail("rm --timeout requires --stop");
+    return FALSE;
+  }
+  if (g_str_equal(opts->command, "rm") && opts->remove_volumes) {
+    fail("rm --volumes is unsupported until anonymous and named VM volumes "
+         "can be removed separately");
     return FALSE;
   }
   if (opts->config_list_mode && opts->config_format) {
@@ -8092,19 +8148,21 @@ int main(int argc, char **argv) {
                            map_get(config, "volumes"), project_environment,
                            TRUE, lifecycle_lock_fd);
     }
-  } else if (g_str_equal(opts.command, "down") ||
-             g_str_equal(opts.command, "rm")) {
+  } else if (g_str_equal(opts.command, "down")) {
     DownContext context = {project_lower, directory, services,
-                           opts.remove_volumes ||
-                               g_str_equal(opts.command, "rm"),
+                           opts.remove_volumes, opts.remove_volumes,
                            opts.dry_run,
                            opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, down_one, &context);
-    if (ok && opts.remove_orphans && g_str_equal(opts.command, "down")) {
+    if (ok && opts.remove_orphans) {
       ok = remove_orphan_services(project_lower, directory, services,
                                   opts.remove_volumes, opts.dry_run,
                                   opts.shutdown_timeout_seconds);
     }
+  } else if (g_str_equal(opts.command, "rm")) {
+    RmContext context = {project_lower, directory, services, opts.rm_stop,
+                         opts.shutdown_timeout_seconds};
+    ok = for_down_services(services, &opts, rm_one, &context);
   } else if (g_str_equal(opts.command, "ps")) {
     gboolean json = g_str_equal(opts.ps_format ? opts.ps_format : "table",
                                 "json");
