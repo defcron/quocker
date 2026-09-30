@@ -511,9 +511,8 @@ in user-facing compatibility promises.
    work: provision trust keys, maintain kernel/initrd assets and catalog
    updates, implement guest network configuration, and persist structured
    readiness/shutdown in host state. The host consumes the guest exit marker
-   for `service_completed_successfully`; `wait` remains a process wait without
-   exit-code output. OCI `up` currently relies on QEMU user networking and a
-   guest DHCP kernel command line.
+   for `service_completed_successfully` and `wait`. OCI `up` currently relies
+   on QEMU user networking and a guest DHCP kernel command line.
 6. Kernel selection must be inspectable and overrideable. OCI metadata does not
    specify a kernel or boot process, so image-specific automatic detection is
    heuristic: architecture and OS are reliable inputs, while distro identity
