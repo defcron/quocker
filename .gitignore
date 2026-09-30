@@ -1,5 +1,6 @@
 /GNUmakefile
 /build/
+/build-quocker/
 /.cache/
 /.vscode/
 *.pyc
@@ -20,3 +21,12 @@ GTAGS
 *.swp
 *.patch
 *.gcov
+
+# Quocker binaries and Meson intermediates land under scripts/ in this build.
+/scripts/quocker
+/scripts/quocker-*-test
+/scripts/quocker-fake-qemu
+/scripts/quocker-fake-qemu-img
+/scripts/quocker-guest-init
+/scripts/docker-credential-quocker-test
+/scripts/quocker*.p/
