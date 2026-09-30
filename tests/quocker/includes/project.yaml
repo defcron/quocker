@@ -1,6 +1,11 @@
 include:
-  - fragments/common.yaml
-  - path: fragments/extra.yaml
+  - path: fragments/common.yaml
+    env_file:
+      - include.env
+      - include-override.env
+  - path:
+      - fragments/extra.yaml
+      - fragments/extra-override.yaml
 services:
   local:
     image: ./local.qcow2

@@ -1194,6 +1194,16 @@ static gboolean include_add_path(YNode *node, GPtrArray *paths) {
   return FALSE;
 }
 
+static const char *include_first_path(const YNode *node) {
+  if (node->kind == NODE_SCALAR) {
+    return node_string(node);
+  }
+  if (node->kind == NODE_SEQUENCE && node->items->len > 0) {
+    return include_first_path(g_ptr_array_index(node->items, 0));
+  }
+  return NULL;
+}
+
 static gboolean absolutize_include_node(YNode *node, const char *base) {
   if (node->kind == NODE_SCALAR) {
     const char *path = node_string(node);
@@ -1232,8 +1242,34 @@ static gboolean absolutize_compose_include_paths(YNode *model,
     YNode *entry = g_ptr_array_index(includes->items, i);
     YNode *path = entry->kind == NODE_MAPPING ? map_get(entry, "path") : entry;
     if (path && !absolutize_include_node(path, base)) {
+      fail("Compose include path must be a path or list of paths");
       g_free(base);
       return FALSE;
+    }
+    if (entry->kind == NODE_MAPPING && path) {
+      YNode *project_directory = map_get(entry, "project_directory");
+      if (project_directory &&
+          !absolutize_include_node(project_directory, base)) {
+        fail("Compose include project_directory must be a path");
+        g_free(base);
+        return FALSE;
+      }
+      const char *directory = node_string(project_directory);
+      char *default_directory = NULL;
+      if (!directory) {
+        const char *first_path = include_first_path(path);
+        default_directory =
+            first_path ? g_path_get_dirname(first_path) : g_strdup(base);
+        directory = default_directory;
+      }
+      YNode *env_file = map_get(entry, "env_file");
+      if (env_file && !absolutize_include_node(env_file, directory)) {
+        fail("Compose include env_file must be a path or list of paths");
+        g_free(default_directory);
+        g_free(base);
+        return FALSE;
+      }
+      g_free(default_directory);
     }
   }
   g_free(base);
@@ -1280,6 +1316,123 @@ static void include_copy_missing_resources(YNode *destination,
   }
 }
 
+static GHashTable *include_environment_new(GHashTable *parent_environment,
+                                           const char *project_directory,
+                                           YNode *env_file) {
+  GHashTable *environment =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  gchar **process_environment = g_get_environ();
+  for (guint i = 0; process_environment[i]; i++) {
+    char **entry = g_strsplit(process_environment[i], "=", 2);
+    if (entry[0] && entry[1]) {
+      g_hash_table_replace(environment, g_strdup(entry[0]), g_strdup(entry[1]));
+    }
+    g_strfreev(entry);
+  }
+  g_strfreev(process_environment);
+
+  GPtrArray *env_files = g_ptr_array_new_with_free_func(g_free);
+  if (env_file &&
+      (!include_add_path(env_file, env_files) || env_files->len == 0)) {
+    fail("Compose include env_file must be a path or list of paths");
+    g_ptr_array_free(env_files, TRUE);
+    g_hash_table_destroy(environment);
+    return NULL;
+  }
+  gboolean ok = TRUE;
+  if (env_files->len == 0) {
+    char *default_env = g_build_filename(project_directory, ".env", NULL);
+    ok = read_project_env_file(environment, default_env, TRUE);
+    g_free(default_env);
+  } else {
+    for (guint i = 0; ok && i < env_files->len; i++) {
+      char *path =
+          absolute_path(g_ptr_array_index(env_files, i), project_directory);
+      ok = read_project_env_file(environment, path, FALSE);
+      g_free(path);
+    }
+  }
+  g_ptr_array_free(env_files, TRUE);
+  if (!ok) {
+    g_hash_table_destroy(environment);
+    return NULL;
+  }
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, parent_environment);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    g_hash_table_replace(environment, g_strdup(key), g_strdup(value));
+  }
+  return environment;
+}
+
+static void resolve_included_service_paths(YNode *service,
+                                           const char *project_directory) {
+  YNode *image = map_get(service, "image");
+  const char *image_name = node_string(image);
+  gboolean local_image = image_name && (g_path_is_absolute(image_name) ||
+                                        g_str_has_prefix(image_name, "./") ||
+                                        g_str_has_prefix(image_name, "../"));
+  if (image_name && !local_image) {
+    char *candidate = g_build_filename(project_directory, image_name, NULL);
+    local_image = g_file_test(candidate, G_FILE_TEST_IS_REGULAR);
+    g_free(candidate);
+  }
+  if (local_image) {
+    char *absolute = absolute_path(image_name, project_directory);
+    g_free(image->scalar);
+    image->scalar = absolute;
+  }
+  YNode *env_file = map_get(service, "env_file");
+  if (env_file) {
+    if (env_file->kind == NODE_SCALAR) {
+      absolutize_include_node(env_file, project_directory);
+    } else if (env_file->kind == NODE_SEQUENCE) {
+      for (guint i = 0; i < env_file->items->len; i++) {
+        YNode *entry = g_ptr_array_index(env_file->items, i);
+        if (entry->kind == NODE_SCALAR) {
+          absolutize_include_node(entry, project_directory);
+        } else if (entry->kind == NODE_MAPPING) {
+          YNode *path = map_get(entry, "path");
+          if (path) {
+            absolutize_include_node(path, project_directory);
+          }
+        }
+      }
+    } else if (env_file->kind == NODE_MAPPING) {
+      YNode *path = map_get(env_file, "path");
+      if (path) {
+        absolutize_include_node(path, project_directory);
+      }
+    }
+  }
+}
+
+static void resolve_included_model_paths(YNode *model,
+                                         const char *project_directory) {
+  YNode *services = map_get(model, "services");
+  if (services && services->kind == NODE_MAPPING) {
+    for (guint i = 0; i < services->items->len; i++) {
+      YPair *pair = g_ptr_array_index(services->items, i);
+      resolve_included_service_paths(pair->value, project_directory);
+    }
+  }
+  for (const char *section_name = "configs"; section_name;
+       section_name = g_str_equal(section_name, "configs") ? "secrets" : NULL) {
+    YNode *section = map_get(model, section_name);
+    if (!section || section->kind != NODE_MAPPING) {
+      continue;
+    }
+    for (guint i = 0; i < section->items->len; i++) {
+      YPair *pair = g_ptr_array_index(section->items, i);
+      YNode *file = map_get(pair->value, "file");
+      if (file && file->kind == NODE_SCALAR) {
+        absolutize_include_node(file, project_directory);
+      }
+    }
+  }
+}
+
 static gboolean expand_compose_includes(YNode *model, const char *compose_path,
                                         const char *project_root,
                                         GHashTable *environment,
@@ -1303,21 +1456,46 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
   for (guint i = 0; i < includes->items->len; i++) {
     YNode *entry = g_ptr_array_index(includes->items, i);
     YNode *path_node = entry;
+    YNode *env_file_node = NULL;
+    YNode *project_directory_node = NULL;
     if (entry->kind == NODE_MAPPING) {
       path_node = map_get(entry, "path");
-      if (map_get(entry, "env_file") || map_get(entry, "project_directory")) {
-        fail("Compose include env_file and project_directory options are not "
-             "supported yet");
-        node_free(imported_model);
-        g_free(containing_directory);
-        return FALSE;
-      }
+      env_file_node = map_get(entry, "env_file");
+      project_directory_node = map_get(entry, "project_directory");
     }
     GPtrArray *paths = g_ptr_array_new_with_free_func(g_free);
     if (!path_node || !include_add_path(path_node, paths) || paths->len == 0) {
       fail("Compose include entries require a path or list of paths");
       g_ptr_array_free(paths, TRUE);
       node_free(imported_model);
+      g_free(containing_directory);
+      return FALSE;
+    }
+    const char *first_path = include_first_path(path_node);
+    const char *project_directory_value = node_string(project_directory_node);
+    if (project_directory_node && !project_directory_value) {
+      fail("Compose include project_directory must be a path");
+      g_ptr_array_free(paths, TRUE);
+      node_free(imported_model);
+      g_free(containing_directory);
+      return FALSE;
+    }
+    char *default_project_directory =
+        project_directory_value
+            ? absolute_path(project_directory_value, containing_directory)
+            : absolute_path(first_path ? first_path : ".",
+                            containing_directory);
+    if (!project_directory_value) {
+      char *directory = g_path_get_dirname(default_project_directory);
+      g_free(default_project_directory);
+      default_project_directory = directory;
+    }
+    GHashTable *included_environment = include_environment_new(
+        environment, default_project_directory, env_file_node);
+    if (!included_environment) {
+      g_ptr_array_free(paths, TRUE);
+      node_free(imported_model);
+      g_free(default_project_directory);
       g_free(containing_directory);
       return FALSE;
     }
@@ -1331,6 +1509,8 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
         g_ptr_array_free(paths, TRUE);
         node_free(entry_model);
         node_free(imported_model);
+        g_hash_table_destroy(included_environment);
+        g_free(default_project_directory);
         g_free(containing_directory);
         return FALSE;
       }
@@ -1341,6 +1521,8 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
         g_ptr_array_free(paths, TRUE);
         node_free(entry_model);
         node_free(imported_model);
+        g_hash_table_destroy(included_environment);
+        g_free(default_project_directory);
         g_free(containing_directory);
         return FALSE;
       }
@@ -1357,14 +1539,17 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
         g_ptr_array_free(paths, TRUE);
         node_free(entry_model);
         node_free(imported_model);
+        g_hash_table_destroy(included_environment);
+        g_free(default_project_directory);
         g_free(containing_directory);
         return FALSE;
       }
       g_hash_table_add(include_stack, g_strdup(absolute));
-      gboolean interpolated = interpolate_compose_values(included, environment);
-      ok = interpolated &&
-           expand_compose_includes(included, absolute, project_root,
-                                   environment, include_stack, depth + 1);
+      gboolean interpolated =
+          interpolate_compose_values(included, included_environment);
+      ok = interpolated && expand_compose_includes(
+                               included, absolute, default_project_directory,
+                               included_environment, include_stack, depth + 1);
       g_hash_table_remove(include_stack, absolute);
       if (!ok) {
         node_free(included);
@@ -1372,6 +1557,8 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
         g_ptr_array_free(paths, TRUE);
         node_free(entry_model);
         node_free(imported_model);
+        g_hash_table_destroy(included_environment);
+        g_free(default_project_directory);
         g_free(containing_directory);
         return FALSE;
       }
@@ -1382,8 +1569,11 @@ static gboolean expand_compose_includes(YNode *model, const char *compose_path,
       g_free(absolute);
     }
     g_ptr_array_free(paths, TRUE);
+    resolve_included_model_paths(entry_model, default_project_directory);
     include_copy_missing_resources(imported_model, entry_model);
     node_free(entry_model);
+    g_hash_table_destroy(included_environment);
+    g_free(default_project_directory);
   }
   map_remove(model, "include");
   include_copy_missing_resources(model, imported_model);

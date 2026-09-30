@@ -310,8 +310,10 @@ in user-facing compatibility promises.
    and `<<` merge keys with mapping/sequence sources work within one file, with
    explicit fields overriding anchor defaults; and `include` supports recursive
    short syntax and long-form `path` values, including path lists, with
-   file-relative lookup and collision warnings. Included project `.env` and
-   `env_file`, `project_directory`, path resolution within included services,
+   file-relative lookup, project-specific `.env`/`env_file` interpolation,
+   `project_directory`, and collision warnings. Included local disk image,
+   service `env_file`, and top-level config/secret file paths use their
+   included project directory; broader included-service path resolution,
    reusable fragments, and service `extends` remain unimplemented.
 7. **Schema validation implemented; diagnostics and policy partial.** The
    pinned schema validates top-level resources and service attributes,

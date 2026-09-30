@@ -1,7 +1,13 @@
 include:
-  - nested.yaml
+  - path: nested.yaml
+    project_directory: nestedbase
 services:
   included:
     image: ./included.qcow2
+  included_env:
+    image: ${INCLUDED_IMAGE}
+    environment:
+      INCLUDED_ONLY: ${INCLUDED_ONLY}
+      INCLUDED_EXTRA: ${INCLUDED_EXTRA}
   shared:
     image: ./included-shared.qcow2

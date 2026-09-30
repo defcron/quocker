@@ -337,10 +337,12 @@ explicit service fields override values inherited from an anchor. Compose
 ``include`` supports recursive short syntax and long-form ``path`` strings or
 lists. Include paths are resolved from the file that declares them. Conflicting
 resource names produce a warning and keep the current project's resource.
-Include ``env_file`` and ``project_directory`` options are rejected, included
-files do not yet load their own ``.env`` defaults, and paths within included
-service definitions still use the main project directory. Service ``extends``
-is not implemented yet.
+Include ``env_file`` and ``project_directory`` are supported; the including
+project's environment overrides values from the included project's optional
+``.env`` or explicit environment files. Relative local disk image, service
+``env_file``, and top-level config/secret file paths use the included project
+directory. Other path-valued attributes in included services and service
+``extends`` are not implemented yet.
 
 Runtime state, logs, PID files, and disk overlays live under
 ``.quocker/PROJECT`` under the project directory.

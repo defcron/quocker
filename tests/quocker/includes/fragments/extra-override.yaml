@@ -1,0 +1,3 @@
+services:
+  second:
+    image: ./second-override.qcow2

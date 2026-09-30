@@ -98,7 +98,9 @@ if not get_option('quocker').disabled()
     test('quocker-compose-include', quocker_compose_include_test,
          args: [files('../tests/quocker/includes/project.yaml'),
                 files('../tests/quocker/includes/override.yaml')],
-         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         env: ['QUOCKER_CLI=' + quocker.full_path(),
+               'INCLUDED_IMAGE=./parent-override.qcow2'],
+         depends: [quocker],
          suite: ['quocker'])
     test('quocker-config-env-file-list', quocker,
          args: ['config', '--quiet'],

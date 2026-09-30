@@ -26,11 +26,45 @@ int main(int argc, char **argv) {
   JsonObject *services = json_object_get_object_member(root, "services");
   g_assert_true(json_object_has_member(services, "local"));
   g_assert_true(json_object_has_member(services, "included"));
+  g_assert_true(json_object_has_member(services, "included_env"));
   g_assert_true(json_object_has_member(services, "nested"));
   g_assert_true(json_object_has_member(services, "second"));
   JsonObject *included = json_object_get_object_member(services, "included");
   g_assert_cmpstr(json_object_get_string_member(included, "image"), ==,
                   "./local-override.qcow2");
+  JsonObject *included_env =
+      json_object_get_object_member(services, "included_env");
+  char *project_directory = g_path_get_dirname(argv[1]);
+  char *expected_include_path = g_build_filename(project_directory, "fragments",
+                                                 "parent-override.qcow2", NULL);
+  char *expected_include_image =
+      g_canonicalize_filename(expected_include_path, NULL);
+  g_assert_cmpstr(json_object_get_string_member(included_env, "image"), ==,
+                  expected_include_image);
+  g_free(expected_include_image);
+  JsonObject *included_environment =
+      json_object_get_object_member(included_env, "environment");
+  g_assert_cmpstr(
+      json_object_get_string_member(included_environment, "INCLUDED_ONLY"), ==,
+      "from-last-include-env");
+  g_assert_cmpstr(
+      json_object_get_string_member(included_environment, "INCLUDED_EXTRA"), ==,
+      "from-include-env-list");
+  JsonObject *nested = json_object_get_object_member(services, "nested");
+  char *expected_nested_path =
+      g_build_filename(project_directory, "fragments", "nestedbase",
+                       "nested-from-dotenv.qcow2", NULL);
+  char *expected_nested_image =
+      g_canonicalize_filename(expected_nested_path, NULL);
+  g_assert_cmpstr(json_object_get_string_member(nested, "image"), ==,
+                  expected_nested_image);
+  g_free(expected_include_path);
+  g_free(expected_nested_image);
+  g_free(expected_nested_path);
+  g_free(project_directory);
+  JsonObject *second = json_object_get_object_member(services, "second");
+  g_assert_nonnull(strstr(json_object_get_string_member(second, "image"),
+                          "second-override.qcow2"));
   JsonObject *shared = json_object_get_object_member(services, "shared");
   g_assert_cmpstr(json_object_get_string_member(shared, "image"), ==,
                   "./local-shared.qcow2");
