@@ -87,6 +87,7 @@ static const char *compose_names[] = {
 static const char *TAG_STR = "tag:yaml.org,2002:str";
 static const char *TAG_MAP = "tag:yaml.org,2002:map";
 static const char *TAG_SEQ = "tag:yaml.org,2002:seq";
+static const char *TAG_NULL = "tag:yaml.org,2002:null";
 
 static char *user_kernel_catalog_path(void) {
   return g_build_filename(g_get_user_cache_dir(), "quocker", "kernels.json",
@@ -657,9 +658,170 @@ static gboolean yaml_parse_text(const char *text, YNode **root,
 }
 
 static YNode *node_merge(const YNode *base, const YNode *override,
+                         const char *field);
+
+static gboolean node_equivalent(const YNode *left, const YNode *right) {
+  if (left->kind != right->kind) {
+    return FALSE;
+  }
+  if (left->kind == NODE_SCALAR) {
+    return g_strcmp0(left->scalar, right->scalar) == 0;
+  }
+  if (left->kind == NODE_SEQUENCE) {
+    if (left->items->len != right->items->len) {
+      return FALSE;
+    }
+    for (guint i = 0; i < left->items->len; i++) {
+      if (!node_equivalent(g_ptr_array_index(left->items, i),
+                           g_ptr_array_index(right->items, i))) {
+        return FALSE;
+      }
+    }
+    return TRUE;
+  }
+  if (left->items->len != right->items->len) {
+    return FALSE;
+  }
+  for (guint i = 0; i < left->items->len; i++) {
+    YPair *pair = g_ptr_array_index(left->items, i);
+    YNode *value = map_get(right, node_string(pair->key));
+    if (!value || !node_equivalent(pair->value, value)) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+static char *port_merge_key(const YNode *node) {
+  const char *ip = "";
+  const char *target = NULL;
+  const char *published = "";
+  const char *protocol = "tcp";
+  char *owned_ip = NULL;
+  char *owned_target = NULL;
+  char *owned_published = NULL;
+  char *owned_protocol = NULL;
+  if (node->kind == NODE_MAPPING) {
+    target = node_string(map_get(node, "target"));
+    if (node_string(map_get(node, "host_ip"))) {
+      ip = node_string(map_get(node, "host_ip"));
+    }
+    if (node_string(map_get(node, "published"))) {
+      published = node_string(map_get(node, "published"));
+    }
+    if (node_string(map_get(node, "protocol"))) {
+      owned_protocol = g_ascii_strdown(node_string(map_get(node, "protocol")),
+                                       -1);
+      protocol = owned_protocol;
+    }
+  } else if (node->kind == NODE_SCALAR) {
+    char *copy = g_strdup(node->scalar ? node->scalar : "");
+    char *slash = strrchr(copy, '/');
+    if (slash) {
+      *slash++ = '\0';
+      owned_protocol = g_ascii_strdown(slash, -1);
+      protocol = owned_protocol;
+    }
+    char *ports = copy;
+    if (ports[0] == '[') {
+      char *closing = strchr(ports, ']');
+      if (closing && closing[1] == ':') {
+        *closing = '\0';
+        owned_ip = g_strdup(ports + 1);
+        ip = owned_ip;
+        ports = closing + 2;
+      }
+    }
+    gchar **parts = g_strsplit(ports, ":", -1);
+    guint count = g_strv_length(parts);
+    if (count == 1) {
+      owned_target = g_strdup(parts[0]);
+    } else if (count == 2) {
+      owned_published = g_strdup(parts[0]);
+      owned_target = g_strdup(parts[1]);
+    } else if (count == 3 && ports == copy) {
+      owned_ip = g_strdup(parts[0]);
+      ip = owned_ip;
+      owned_published = g_strdup(parts[1]);
+      owned_target = g_strdup(parts[2]);
+    }
+    target = owned_target;
+    if (owned_published) {
+      published = owned_published;
+    }
+    g_strfreev(parts);
+    g_free(copy);
+  }
+  char *key = target && *target
+                  ? g_strdup_printf("%s\037%s\037%s\037%s", ip, target,
+                                    published, protocol)
+                  : NULL;
+  g_free(owned_ip);
+  g_free(owned_target);
+  g_free(owned_published);
+  g_free(owned_protocol);
+  return key;
+}
+
+static char *resource_merge_key(const char *field, const YNode *node) {
+  if (g_strcmp0(field, "ports") == 0) {
+    return port_merge_key(node);
+  }
+  if (g_strcmp0(field, "volumes") != 0 &&
+      g_strcmp0(field, "secrets") != 0 &&
+      g_strcmp0(field, "configs") != 0) {
+    return NULL;
+  }
+  const char *target = NULL;
+  char *owned_target = NULL;
+  if (node->kind == NODE_MAPPING) {
+    target = node_string(map_get(node, "target"));
+    if (!target && g_strcmp0(field, "volumes") != 0) {
+      target = node_string(map_get(node, "source"));
+    }
+  } else if (node->kind == NODE_SCALAR) {
+    char **parts = g_strsplit(node->scalar ? node->scalar : "", ":", -1);
+    guint count = g_strv_length(parts);
+    if (g_strcmp0(field, "volumes") == 0) {
+      owned_target = g_strdup(count > 1 ? parts[1] : parts[0]);
+      target = owned_target;
+    } else {
+      owned_target = g_strdup(parts[0]);
+      target = owned_target;
+    }
+    g_strfreev(parts);
+  }
+  char *key = target && *target ? g_strdup(target) : NULL;
+  g_free(owned_target);
+  return key;
+}
+
+static gboolean sequence_field_deduplicated(const char *field) {
+  static const char *const fields[] = {
+      "cap_add", "cap_drop", "device_cgroup_rules", "expose",
+      "external_links", "security_opt", "constraints", "preferences",
+      "generic_resources", NULL};
+  for (const char *const *item = fields; *item; item++) {
+    if (g_strcmp0(field, *item) == 0) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+static YNode *node_merge(const YNode *base, const YNode *override,
                          const char *field) {
-  if (g_str_equal(override->tag, "!reset") ||
-      g_str_equal(override->tag, "!override")) {
+  if (g_str_equal(override->tag, "!reset")) {
+    NodeKind kind = base ? base->kind : override->kind;
+    YNode *result = node_new(kind, kind == NODE_MAPPING ? TAG_MAP
+                                      : kind == NODE_SEQUENCE ? TAG_SEQ
+                                                               : TAG_NULL);
+    if (kind == NODE_SCALAR) {
+      result->scalar = g_strdup("null");
+    }
+    return result;
+  }
+  if (g_str_equal(override->tag, "!override")) {
     YNode *result = node_clone(override);
     g_free(result->tag);
     result->tag = g_strdup(result->kind == NODE_SCALAR     ? TAG_STR
@@ -673,21 +835,62 @@ static YNode *node_merge(const YNode *base, const YNode *override,
       YPair *incoming = g_ptr_array_index(override->items, i);
       const char *key = node_string(incoming->key);
       YNode *old = key ? map_get(result, key) : NULL;
-      map_set(result, key ? key : "",
-              old ? node_merge(old, incoming->value, key)
-                  : node_clone(incoming->value));
+      YNode *value = NULL;
+      if (old) {
+        value = node_merge(old, incoming->value, key);
+      } else if (incoming->value->kind == NODE_MAPPING ||
+                 incoming->value->kind == NODE_SEQUENCE) {
+        YNode *empty = node_new(incoming->value->kind, incoming->value->tag);
+        value = node_merge(empty, incoming->value, key);
+        node_free(empty);
+      } else {
+        value = node_clone(incoming->value);
+      }
+      map_set(result, key ? key : "", value);
     }
     return result;
   }
   if (base->kind == NODE_SEQUENCE && override->kind == NODE_SEQUENCE) {
     if (g_strcmp0(field, "command") == 0 ||
-        g_strcmp0(field, "entrypoint") == 0) {
+        g_strcmp0(field, "entrypoint") == 0 ||
+        g_strcmp0(field, "test") == 0) {
       return node_clone(override);
     }
     YNode *result = node_clone(base);
     for (guint i = 0; i < override->items->len; i++) {
-      g_ptr_array_add(result->items,
-                      node_clone(g_ptr_array_index(override->items, i)));
+      YNode *item = g_ptr_array_index(override->items, i);
+      char *incoming_key = resource_merge_key(field, item);
+      gint existing_index = -1;
+      if (incoming_key) {
+        for (guint j = 0; j < result->items->len; j++) {
+          char *existing_key =
+              resource_merge_key(field, g_ptr_array_index(result->items, j));
+          gboolean equal = g_strcmp0(incoming_key, existing_key) == 0;
+          g_free(existing_key);
+          if (equal) {
+            existing_index = (gint)j;
+            break;
+          }
+        }
+      }
+      if (existing_index >= 0) {
+        YNode *old = g_ptr_array_index(result->items, existing_index);
+        YNode *merged = node_merge(old, item, NULL);
+        node_free(old);
+        g_ptr_array_index(result->items, existing_index) = merged;
+      } else if (sequence_field_deduplicated(field)) {
+        gboolean duplicate = FALSE;
+        for (guint j = 0; j < result->items->len; j++) {
+          duplicate |= node_equivalent(g_ptr_array_index(result->items, j),
+                                       item);
+        }
+        if (!duplicate) {
+          g_ptr_array_add(result->items, node_clone(item));
+        }
+      } else {
+        g_ptr_array_add(result->items, node_clone(item));
+      }
+      g_free(incoming_key);
     }
     return result;
   }

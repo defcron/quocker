@@ -324,6 +324,14 @@ another Compose file;
 a service profile. On Linux, ``COMPOSE_FILE`` accepts a colon-separated file
 list; ``COMPOSE_PATH_SEPARATOR`` can select another separator. The YAML reader
 rejects duplicate mapping keys and files containing multiple YAML documents.
+When merging service definitions, ``command``, ``entrypoint``, and
+``healthcheck.test`` use the later value. Ports merge by IP, target, published
+port, and protocol; volumes, secrets, and configs merge by target, including
+when the same resource uses short syntax in one file and long syntax in
+another. Other sequences append, with duplicate entries removed for the
+supported capability, device-cgroup-rule, expose, external-link, security,
+placement-constraint, placement-preference, and generic-resource lists.
+``!reset`` clears an overridden value and ``!override`` replaces it.
 
 Runtime state, logs, PID files, and disk overlays live under
 ``.quocker/PROJECT`` under the project directory.

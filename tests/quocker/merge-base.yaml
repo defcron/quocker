@@ -1,0 +1,21 @@
+services:
+  app:
+    image: ./app.qcow2
+    command: [echo, base]
+    expose: [80, 81]
+    environment:
+      BASE: value
+    healthcheck:
+      test: [CMD, "true"]
+    ports:
+      - "8080:80"
+      - "9090:90"
+    volumes:
+      - "cache:/data"
+      - "logs:/logs"
+    secrets:
+      - source: old-secret
+        target: /run/key
+    configs:
+      - source: old-config
+        target: /etc/settings

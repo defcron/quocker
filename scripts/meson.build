@@ -74,6 +74,15 @@ if not get_option('quocker').disabled()
          args: ['-f', files('../tests/quocker/base.yaml'),
                 '-f', files('../tests/quocker/override.yaml'), 'config', '--quiet'],
          suite: ['quocker'])
+    quocker_merge_unique_test = executable(
+      'quocker-merge-unique-test',
+      files('../tests/quocker/merge-unique-test.c'),
+      dependencies: [glib, quocker_json])
+    test('quocker-config-unique-merge', quocker_merge_unique_test,
+         args: [files('../tests/quocker/merge-base.yaml'),
+                files('../tests/quocker/merge-override.yaml')],
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     test('quocker-config-env-file-list', quocker,
          args: ['config', '--quiet'],
          env: ['COMPOSE_FILE=../tests/quocker/base.yaml|../tests/quocker/override.yaml',

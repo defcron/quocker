@@ -1,0 +1,19 @@
+services:
+  app:
+    command: [echo, override]
+    expose: !reset []
+    environment: !reset {}
+    healthcheck:
+      test: [CMD, "false"]
+    ports:
+      - target: 80
+        published: "8080"
+      - "8081:81"
+    volumes:
+      - "new-cache:/data"
+    secrets:
+      - source: new-secret
+        target: /run/key
+    configs:
+      - source: new-config
+        target: /etc/settings

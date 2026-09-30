@@ -88,7 +88,7 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 45 focused tests; its latest run reported 25
+  Meson suite currently has 46 focused tests; its latest run reported 26
   passes, 20 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
@@ -189,7 +189,8 @@ installed as an optional Meson target, with a user page at
   names, and two `quocker-compose` aliases;
 - parses YAML mappings, validates the merged configuration against the pinned
   Compose schema, interpolates a subset of environment syntax, merges multiple
-  files with basic rules, retains schema-valid fields for `config`, and
+  files with mapping, sequence, command, unique-resource, and reset/override
+  rules, retains schema-valid fields for `config`, and
   recognizes `!reset` / `!override` tags;
 - provides `up`, `down`, `rm`, `ps`, `logs`, and `config`, with direct and
   `quocker compose` command forms;
@@ -218,7 +219,7 @@ process/state recovery, cleanup, and packaging need more coverage and review.
 OCI service ``env_file`` now supports ordered path lists, interpolation,
 optional long-form files, raw format, and service-environment precedence in C;
 explicit unresolved environment entries remove image defaults. The current
-The Quocker suite contains 45 tests: 25 pass, 20 produce expected failures,
+The Quocker suite contains 46 tests: 26 pass, 20 produce expected failures,
 and none fail unexpectedly. It includes JSON config serialization, static and
 dynamic port queries, plus a fake-QEMU lifecycle integration
 test covering stop, start, down, pause, unpause, kill, state preservation, and
@@ -296,9 +297,14 @@ in user-facing compatibility promises.
 4. Keep project interpolation distinct from per-service `environment` and
    `env_file` processing. Resolve all relative paths using the correct base
    file/project rules.
-5. Implement multi-file merge semantics by field, including short/long form
-   expansion, unique resources, volume target matching, command replacement,
-   `!reset`, and `!override`.
+5. **Partially implemented:** mappings merge recursively; ordinary sequences
+   append; command, entrypoint, and healthcheck test sequences replace; ports
+   merge by IP/target/published/protocol; and volumes, secrets, and configs
+   merge by target across short/long forms. Supported capability, device-rule,
+   exposure, external-link, security, placement, and generic-resource lists
+   deduplicate identical entries. `!reset` and `!override` are recognized.
+   Full Compose short/long normalization and compatibility fixtures for every
+   resource and merge field remain.
 6. Implement reusable fragments and extensions, YAML anchors, `include`, and
    service `extends` with the correct file and path scopes.
 7. **Schema validation implemented; diagnostics and policy partial.** The
