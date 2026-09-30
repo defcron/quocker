@@ -5567,7 +5567,7 @@ static void usage(FILE *file) {
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
-          "rm, ps, logs, "
+          "rm, ps, logs, volume ls, "
           "pull, prune, config, port\n"
           "  kill: -s SIGNAL             Signal to send (default SIGKILL)\n"
           "Kernel tools: quocker kernel select|fetch --platform OS/ARCH "
@@ -5746,6 +5746,13 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
   if (g_str_equal(opts->command, "port") &&
       (opts->services->len != 1 || !opts->port_spec)) {
     fail("port requires SERVICE PRIVATE_PORT[/PROTOCOL]");
+    return FALSE;
+  }
+  if (g_str_equal(opts->command, "volume") &&
+      (opts->services->len != 1 ||
+       (!g_str_equal(g_ptr_array_index(opts->services, 0), "ls") &&
+        !g_str_equal(g_ptr_array_index(opts->services, 0), "list")))) {
+    fail("volume requires the 'ls' subcommand");
     return FALSE;
   }
   return TRUE;
@@ -6113,7 +6120,8 @@ int main(int argc, char **argv) {
   }
   char *directory = service_dir(root, project_lower);
   if (!g_str_equal(opts.command, "config") &&
-      !g_str_equal(opts.command, "port") && !opts.dry_run) {
+      !g_str_equal(opts.command, "port") &&
+      !g_str_equal(opts.command, "volume") && !opts.dry_run) {
     if (g_mkdir_with_parents(directory, 0700) < 0) {
       fail("cannot create state directory %s: %s", directory,
            g_strerror(errno));
@@ -6173,6 +6181,27 @@ int main(int argc, char **argv) {
   } else if (g_str_equal(opts.command, "port")) {
     PortContext context = {opts.port_spec, directory, project_lower};
     ok = for_services(services, &opts, port_one, &context);
+  } else if (g_str_equal(opts.command, "volume")) {
+    GPtrArray *volumes = NULL;
+    GError *volume_error = NULL;
+    ok = quocker_volume_list(directory, &volumes, &volume_error);
+    if (!ok) {
+      fail("cannot list project volumes: %s",
+           volume_error ? volume_error->message : "unknown volume error");
+    } else {
+      g_print("NAME\tSIZE\n");
+      for (guint i = 0; i < volumes->len; i++) {
+        QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
+        char *size =
+            g_format_size_full(info->size_bytes, G_FORMAT_SIZE_IEC_UNITS);
+        g_print("%s\t%s\n", info->logical_name, size);
+        g_free(size);
+      }
+    }
+    g_clear_error(&volume_error);
+    if (volumes) {
+      g_ptr_array_free(volumes, TRUE);
+    }
   } else if (g_str_equal(opts.command, "logs")) {
     LogsContext context = {directory, &opts};
     ok = for_services(services, &opts, logs_one, &context);

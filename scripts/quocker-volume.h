@@ -10,9 +10,20 @@
 
 #include <glib.h>
 
+typedef struct QuockerVolumeInfo {
+  char *logical_name;
+  char *disk_path;
+  guint64 size_bytes;
+} QuockerVolumeInfo;
+
+void quocker_volume_info_free(QuockerVolumeInfo *info);
+
 gboolean quocker_volume_disk_prepare(const char *project_directory,
                                      const char *logical_name,
                                      guint64 size_bytes, char **disk_path_out,
                                      GError **error);
+
+gboolean quocker_volume_list(const char *project_directory,
+                             GPtrArray **volumes_out, GError **error);
 
 #endif

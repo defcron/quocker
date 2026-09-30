@@ -353,7 +353,9 @@ if not get_option('quocker').disabled()
       'quocker-volume-test',
       [files('../tests/quocker/volume-test.c'), 'quocker-volume.c'],
       dependencies: [glib])
-    test('quocker-volume', quocker_volume_test, suite: ['quocker'])
+    test('quocker-volume', quocker_volume_test,
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
   endif
 endif
 

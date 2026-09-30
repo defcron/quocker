@@ -19,7 +19,8 @@ Enable it at configure time with ``-Dquocker=enabled``; the build requires the
 ``yaml-0.1``, ``libcurl``, ``json-glib-1.0``, ``libarchive``, ``openssl``, and
 ``ext2fs`` pkg-config packages. On Arch Linux, install
 ``libyaml curl json-glib libarchive openssl e2fsprogs`` with pacman. The
-``mke2fs`` tool from e2fsprogs is needed for OCI rootfs-to-ext4 conversion.
+``mke2fs`` tool from e2fsprogs is needed for OCI rootfs-to-ext4 conversion
+and for creating persistent volume disks.
 It also requires ``qemu-system-x86_64`` and ``qemu-img`` at runtime. QEMU
 executables can be selected with the ``QUOCKER_QEMU`` and
 ``QUOCKER_QEMU_IMG`` environment variables.
@@ -304,7 +305,9 @@ syntax; it does not mean every accepted field has a VM runtime implementation.
 disk overlays. ``quocker logs [SERVICE]`` shows serial output, and
 ``quocker logs -f`` follows it. ``quocker down`` stops services while retaining
 their disks. ``quocker down --volumes`` stops services and removes their
-overlays. ``quocker pull`` downloads OCI manifests/config/layer blobs and
+overlays and project volume disks. ``quocker volume ls`` lists persistent VM
+volumes for the current Compose project with their logical names and virtual
+sizes. ``quocker pull`` downloads OCI manifests/config/layer blobs and
 materializes rootfs data and a raw ext4 guest disk in
 ``$XDG_CACHE_HOME/quocker/oci`` (or the platform cache directory). OCI-backed
 ``up`` can boot this guest disk when a compatible signed kernel catalog and
