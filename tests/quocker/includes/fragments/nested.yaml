@@ -1,0 +1,3 @@
+services:
+  nested:
+    image: ./nested.qcow2

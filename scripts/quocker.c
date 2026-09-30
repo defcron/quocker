@@ -1161,6 +1161,237 @@ static char *absolute_path(const char *path, const char *base) {
   return g_canonicalize_filename(path, base);
 }
 
+static void map_remove(YNode *map, const char *key) {
+  for (guint i = 0; i < map->items->len; i++) {
+    YPair *pair = g_ptr_array_index(map->items, i);
+    if (g_strcmp0(node_string(pair->key), key) == 0) {
+      node_free(pair->key);
+      node_free(pair->value);
+      g_free(pair);
+      g_ptr_array_remove_index(map->items, i);
+      return;
+    }
+  }
+}
+
+static gboolean include_add_path(YNode *node, GPtrArray *paths) {
+  if (node->kind == NODE_SCALAR) {
+    const char *path = node_string(node);
+    if (path && *path) {
+      g_ptr_array_add(paths, g_strdup(path));
+      return TRUE;
+    }
+    return FALSE;
+  }
+  if (node->kind == NODE_SEQUENCE) {
+    for (guint i = 0; i < node->items->len; i++) {
+      if (!include_add_path(g_ptr_array_index(node->items, i), paths)) {
+        return FALSE;
+      }
+    }
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static gboolean absolutize_include_node(YNode *node, const char *base) {
+  if (node->kind == NODE_SCALAR) {
+    const char *path = node_string(node);
+    if (!path || !*path) {
+      return FALSE;
+    }
+    char *absolute = absolute_path(path, base);
+    g_free(node->scalar);
+    node->scalar = absolute;
+    return TRUE;
+  }
+  if (node->kind == NODE_SEQUENCE) {
+    for (guint i = 0; i < node->items->len; i++) {
+      if (!absolutize_include_node(g_ptr_array_index(node->items, i), base)) {
+        return FALSE;
+      }
+    }
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static gboolean absolutize_compose_include_paths(YNode *model,
+                                                 const char *compose_path,
+                                                 const char *project_root) {
+  YNode *includes = map_get(model, "include");
+  if (!includes) {
+    return TRUE;
+  }
+  if (includes->kind != NODE_SEQUENCE) {
+    return TRUE;
+  }
+  char *base =
+      compose_path ? g_path_get_dirname(compose_path) : g_strdup(project_root);
+  for (guint i = 0; i < includes->items->len; i++) {
+    YNode *entry = g_ptr_array_index(includes->items, i);
+    YNode *path = entry->kind == NODE_MAPPING ? map_get(entry, "path") : entry;
+    if (path && !absolutize_include_node(path, base)) {
+      g_free(base);
+      return FALSE;
+    }
+  }
+  g_free(base);
+  return TRUE;
+}
+
+static void include_copy_missing_resources(YNode *destination,
+                                           const YNode *source) {
+  for (guint i = 0; i < source->items->len; i++) {
+    YPair *source_pair = g_ptr_array_index(source->items, i);
+    const char *section = node_string(source_pair->key);
+    if (!section || g_str_equal(section, "include") ||
+        g_str_equal(section, "name") || g_str_equal(section, "version")) {
+      continue;
+    }
+    if (source_pair->value->kind == NODE_MAPPING) {
+      YNode *target = map_get(destination, section);
+      if (!target) {
+        map_set(destination, section, node_clone(source_pair->value));
+        continue;
+      }
+      if (target->kind != NODE_MAPPING) {
+        g_printerr(
+            "quocker: warning: included Compose section '%s' "
+            "conflicts with the current project; keeping current value\n",
+            section);
+        continue;
+      }
+      for (guint j = 0; j < source_pair->value->items->len; j++) {
+        YPair *resource = g_ptr_array_index(source_pair->value->items, j);
+        const char *name = node_string(resource->key);
+        if (name && !map_get(target, name)) {
+          map_set(target, name, node_clone(resource->value));
+        } else if (name) {
+          g_printerr("quocker: warning: included Compose resource '%s.%s' "
+                     "conflicts with the current project; keeping current "
+                     "resource\n",
+                     section, name);
+        }
+      }
+    } else if (!map_get(destination, section)) {
+      map_set(destination, section, node_clone(source_pair->value));
+    }
+  }
+}
+
+static gboolean expand_compose_includes(YNode *model, const char *compose_path,
+                                        const char *project_root,
+                                        GHashTable *environment,
+                                        GHashTable *include_stack,
+                                        guint depth) {
+  YNode *includes = map_get(model, "include");
+  if (!includes) {
+    return TRUE;
+  }
+  if (includes->kind != NODE_SEQUENCE) {
+    fail("Compose include must be a sequence");
+    return FALSE;
+  }
+  if (depth >= 32) {
+    fail("Compose include nesting exceeds 32 files");
+    return FALSE;
+  }
+  char *containing_directory =
+      compose_path ? g_path_get_dirname(compose_path) : g_strdup(project_root);
+  YNode *imported_model = node_new(NODE_MAPPING, TAG_MAP);
+  for (guint i = 0; i < includes->items->len; i++) {
+    YNode *entry = g_ptr_array_index(includes->items, i);
+    YNode *path_node = entry;
+    if (entry->kind == NODE_MAPPING) {
+      path_node = map_get(entry, "path");
+      if (map_get(entry, "env_file") || map_get(entry, "project_directory")) {
+        fail("Compose include env_file and project_directory options are not "
+             "supported yet");
+        node_free(imported_model);
+        g_free(containing_directory);
+        return FALSE;
+      }
+    }
+    GPtrArray *paths = g_ptr_array_new_with_free_func(g_free);
+    if (!path_node || !include_add_path(path_node, paths) || paths->len == 0) {
+      fail("Compose include entries require a path or list of paths");
+      g_ptr_array_free(paths, TRUE);
+      node_free(imported_model);
+      g_free(containing_directory);
+      return FALSE;
+    }
+    YNode *entry_model = node_new(NODE_MAPPING, TAG_MAP);
+    for (guint j = 0; j < paths->len; j++) {
+      const char *path = g_ptr_array_index(paths, j);
+      char *absolute = absolute_path(path, containing_directory);
+      if (g_hash_table_contains(include_stack, absolute)) {
+        fail("Compose include cycle detected at %s", absolute);
+        g_free(absolute);
+        g_ptr_array_free(paths, TRUE);
+        node_free(entry_model);
+        node_free(imported_model);
+        g_free(containing_directory);
+        return FALSE;
+      }
+      gchar *contents = NULL;
+      if (!g_file_get_contents(absolute, &contents, NULL, NULL)) {
+        fail("cannot read included Compose file %s", absolute);
+        g_free(absolute);
+        g_ptr_array_free(paths, TRUE);
+        node_free(entry_model);
+        node_free(imported_model);
+        g_free(containing_directory);
+        return FALSE;
+      }
+      YNode *included = NULL;
+      char *problem = NULL;
+      gboolean ok = yaml_parse_text(contents, &included, &problem);
+      g_free(contents);
+      if (!ok || !included || included->kind != NODE_MAPPING) {
+        fail("invalid included Compose YAML in %s: %s", absolute,
+             problem ? problem : "expected a mapping");
+        g_free(problem);
+        node_free(included);
+        g_free(absolute);
+        g_ptr_array_free(paths, TRUE);
+        node_free(entry_model);
+        node_free(imported_model);
+        g_free(containing_directory);
+        return FALSE;
+      }
+      g_hash_table_add(include_stack, g_strdup(absolute));
+      gboolean interpolated = interpolate_compose_values(included, environment);
+      ok = interpolated &&
+           expand_compose_includes(included, absolute, project_root,
+                                   environment, include_stack, depth + 1);
+      g_hash_table_remove(include_stack, absolute);
+      if (!ok) {
+        node_free(included);
+        g_free(absolute);
+        g_ptr_array_free(paths, TRUE);
+        node_free(entry_model);
+        node_free(imported_model);
+        g_free(containing_directory);
+        return FALSE;
+      }
+      YNode *next = node_merge(entry_model, included, NULL);
+      node_free(entry_model);
+      entry_model = next;
+      node_free(included);
+      g_free(absolute);
+    }
+    g_ptr_array_free(paths, TRUE);
+    include_copy_missing_resources(imported_model, entry_model);
+    node_free(entry_model);
+  }
+  map_remove(model, "include");
+  include_copy_missing_resources(model, imported_model);
+  node_free(imported_model);
+  g_free(containing_directory);
+  return TRUE;
+}
+
 static char *discover_file(const char *directory) {
   for (const char **name = compose_names; *name; name++) {
     char *path = g_build_filename(directory, *name, NULL);
@@ -1353,6 +1584,10 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
     YNode *parsed = node_clone(g_ptr_array_index(parsed_files, i));
     interpolation_ok = interpolate_compose_values(parsed, environment);
     if (interpolation_ok) {
+      interpolation_ok = absolutize_compose_include_paths(
+          parsed, g_ptr_array_index(files, i), root);
+    }
+    if (interpolation_ok) {
       YNode *next = node_merge(interpolated, parsed, NULL);
       node_free(interpolated);
       interpolated = next;
@@ -1368,21 +1603,33 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
     *project_name_out = NULL;
     return FALSE;
   }
+  GHashTable *include_stack =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  gboolean includes_ok = expand_compose_includes(interpolated, NULL, root,
+                                                 environment, include_stack, 0);
+  g_hash_table_destroy(include_stack);
+  if (!includes_ok) {
+    node_free(interpolated);
+    node_free(merged);
+    g_hash_table_destroy(environment);
+    g_free(*project_name_out);
+    *project_name_out = NULL;
+    return FALSE;
+  }
   YNode *normalized_name = node_new(NODE_SCALAR, TAG_STR);
   normalized_name->scalar = g_strdup(*project_name_out);
   map_set(interpolated, "name", normalized_name);
   node_free(merged);
   merged = interpolated;
   const char *schema_override = g_getenv("QUOCKER_COMPOSE_SCHEMA");
-  const char *schema_path = schema_override && *schema_override
-                                ? schema_override
-                                : NULL;
-  if (!schema_path && g_file_test(QUOCKER_SCHEMA_INSTALL_PATH,
-                                  G_FILE_TEST_IS_REGULAR)) {
+  const char *schema_path =
+      schema_override && *schema_override ? schema_override : NULL;
+  if (!schema_path &&
+      g_file_test(QUOCKER_SCHEMA_INSTALL_PATH, G_FILE_TEST_IS_REGULAR)) {
     schema_path = QUOCKER_SCHEMA_INSTALL_PATH;
   }
-  if (!schema_path && g_file_test(QUOCKER_SCHEMA_BUILD_PATH,
-                                  G_FILE_TEST_IS_REGULAR)) {
+  if (!schema_path &&
+      g_file_test(QUOCKER_SCHEMA_BUILD_PATH, G_FILE_TEST_IS_REGULAR)) {
     schema_path = QUOCKER_SCHEMA_BUILD_PATH;
   }
   if (!schema_path) {

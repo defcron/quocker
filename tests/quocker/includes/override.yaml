@@ -1,0 +1,3 @@
+services:
+  included:
+    image: ./local-override.qcow2

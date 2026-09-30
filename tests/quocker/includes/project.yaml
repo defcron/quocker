@@ -1,0 +1,8 @@
+include:
+  - fragments/common.yaml
+  - path: fragments/extra.yaml
+services:
+  local:
+    image: ./local.qcow2
+  shared:
+    image: ./local-shared.qcow2

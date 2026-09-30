@@ -1,0 +1,7 @@
+include:
+  - nested.yaml
+services:
+  included:
+    image: ./included.qcow2
+  shared:
+    image: ./included-shared.qcow2

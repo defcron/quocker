@@ -91,6 +91,15 @@ if not get_option('quocker').disabled()
          args: [files('../tests/quocker/yaml-anchors.yaml')],
          env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
          suite: ['quocker'])
+    quocker_compose_include_test = executable(
+      'quocker-compose-include-test',
+      files('../tests/quocker/compose-include-test.c'),
+      dependencies: [glib, quocker_json])
+    test('quocker-compose-include', quocker_compose_include_test,
+         args: [files('../tests/quocker/includes/project.yaml'),
+                files('../tests/quocker/includes/override.yaml')],
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     test('quocker-config-env-file-list', quocker,
          args: ['config', '--quiet'],
          env: ['COMPOSE_FILE=../tests/quocker/base.yaml|../tests/quocker/override.yaml',

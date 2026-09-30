@@ -334,7 +334,13 @@ placement-constraint, placement-preference, and generic-resource lists.
 ``!reset`` clears an overridden value and ``!override`` replaces it.
 YAML aliases and ``<<`` merge-key anchors are expanded within one file;
 explicit service fields override values inherited from an anchor. Compose
-``include`` and service ``extends`` are not implemented yet.
+``include`` supports recursive short syntax and long-form ``path`` strings or
+lists. Include paths are resolved from the file that declares them. Conflicting
+resource names produce a warning and keep the current project's resource.
+Include ``env_file`` and ``project_directory`` options are rejected, included
+files do not yet load their own ``.env`` defaults, and paths within included
+service definitions still use the main project directory. Service ``extends``
+is not implemented yet.
 
 Runtime state, logs, PID files, and disk overlays live under
 ``.quocker/PROJECT`` under the project directory.
