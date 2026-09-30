@@ -517,9 +517,14 @@ in user-facing compatibility promises.
    20 GiB and are configurable with ``QUOCKER_VOLUME_QUOTA``; ``volume ls``
    and ``volume df`` report virtual capacity and actual filesystem allocation.
    Volume creation and removal use a project lock so concurrent creates cannot
-   exceed the quota.
-   Global cache quotas, per-image accounting, retention policies, and garbage
-   collection remain to be implemented.
+   exceed the quota. The global OCI cache quota also defaults to 20 GiB and is
+   configurable with ``QUOCKER_OCI_CACHE_LIMIT``. It counts logical bytes for
+   registry blobs and materialized cache files; ``quocker prune`` removes
+   unreferenced content while preserving content used by VM overlays. Cache
+   admission now fails closed when a recursive usage scan cannot be completed,
+   instead of treating an unreadable subtree as empty. Per-image accounting,
+   configurable retention policies, and broader lifecycle/garbage-collection
+   policy remain.
 5. **Partially implemented:** project-local locks serialize volume mutations
    and CLI VM lifecycle commands; QEMU-compatible disk locks prevent deleting
    active volume files. Write-side recovery repairs volume metadata and cleans

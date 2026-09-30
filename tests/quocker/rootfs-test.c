@@ -13,6 +13,7 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <sys/xattr.h>
+#include <unistd.h>
 
 static gboolean write_layer(const char *path, const char *const *names,
                             const char *const *contents, const mode_t *types,
@@ -371,6 +372,21 @@ static void test_completion_marker_obeys_cache_limit(void) {
   g_free(cache);
 }
 
+static void test_cache_accounting_fails_closed(void) {
+  char *cache_file = NULL;
+  GError *error = NULL;
+  int fd = g_file_open_tmp("quocker-cache-accounting-XXXXXX", &cache_file,
+                           &error);
+  g_assert_cmpint(fd, >=, 0);
+  g_assert_no_error(error);
+  close(fd);
+  g_setenv("QUOCKER_OCI_CACHE_LIMIT", "1073741824", TRUE);
+  g_assert_false(quocker_oci_cache_has_room(cache_file, 1));
+  g_unsetenv("QUOCKER_OCI_CACHE_LIMIT");
+  g_assert_cmpint(g_unlink(cache_file), ==, 0);
+  g_free(cache_file);
+}
+
 static void test_extended_attributes_are_staged_without_host_privilege(void) {
   char *cache = new_cache_directory();
   char *layer = g_build_filename(cache, "xattrs.tar", NULL);
@@ -576,6 +592,8 @@ int main(int argc, char **argv) {
                   test_symlink_parent_is_rejected);
   g_test_add_func("/quocker/rootfs/marker-cache-limit",
                   test_completion_marker_obeys_cache_limit);
+  g_test_add_func("/quocker/rootfs/cache-accounting-fails-closed",
+                  test_cache_accounting_fails_closed);
   g_test_add_func("/quocker/rootfs/extended-attributes",
                   test_extended_attributes_are_staged_without_host_privilege);
   g_test_add_func("/quocker/rootfs/device-placeholders",

@@ -13,6 +13,7 @@
 #include "quocker-rootfs.h"
 
 #include <curl/curl.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <glib/gstdio.h>
@@ -747,14 +748,25 @@ static guint64 cache_usage_recursive(const char *directory, guint depth) {
   if (depth > 256) {
     return G_MAXUINT64;
   }
-  GDir *dir = g_dir_open(directory, 0, NULL);
+  DIR *dir = opendir(directory);
   if (!dir) {
-    return 0;
+    return G_MAXUINT64;
   }
   guint64 total = 0;
-  const char *name;
-  while ((name = g_dir_read_name(dir))) {
-    char *path = g_build_filename(directory, name, NULL);
+  while (TRUE) {
+    errno = 0;
+    struct dirent *entry = readdir(dir);
+    if (!entry) {
+      if (errno) {
+        total = G_MAXUINT64;
+      }
+      break;
+    }
+    if (g_str_equal(entry->d_name, ".") ||
+        g_str_equal(entry->d_name, "..")) {
+      continue;
+    }
+    char *path = g_build_filename(directory, entry->d_name, NULL);
     struct stat st;
     if (lstat(path, &st) == 0) {
       if (S_ISDIR(st.st_mode)) {
@@ -765,22 +777,30 @@ static guint64 cache_usage_recursive(const char *directory, guint depth) {
           total += nested;
         }
       } else if (S_ISREG(st.st_mode)) {
-        if (G_MAXUINT64 - total < (guint64)st.st_size) {
+        if (st.st_size < 0 || G_MAXUINT64 - total < (guint64)st.st_size) {
           total = G_MAXUINT64;
         } else {
           total += st.st_size;
         }
       }
+    } else if (errno != ENOENT) {
+      total = G_MAXUINT64;
     }
     g_free(path);
   }
-  g_dir_close(dir);
+  if (closedir(dir) < 0) {
+    total = G_MAXUINT64;
+  }
   return total;
 }
 
 static gboolean cache_room(const char *directory, guint64 incoming) {
   guint64 limit = cache_limit();
   guint64 current = cache_usage_recursive(directory, 0);
+  if (current == G_MAXUINT64) {
+    oci_error("cannot safely account for OCI cache usage in %s", directory);
+    return FALSE;
+  }
   if (!limit || current > limit || incoming > limit - current) {
     oci_error("OCI cache limit exceeded (%" G_GUINT64_FORMAT
               " bytes used, requesting %" G_GUINT64_FORMAT
