@@ -158,6 +158,12 @@ if not get_option('quocker').disabled()
          args: [files('../tests/quocker/valid.yaml')],
          env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
          suite: ['quocker'])
+    quocker_logs_tail_test = executable(
+      'quocker-logs-tail-test', files('../tests/quocker/logs-tail-test.c'),
+      dependencies: [glib])
+    test('quocker-logs-tail', quocker_logs_tail_test,
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     test('quocker-config-merge', quocker,
          args: ['-f', files('../tests/quocker/base.yaml'),
                 '-f', files('../tests/quocker/override.yaml'), 'config', '--quiet'],

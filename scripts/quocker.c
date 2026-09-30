@@ -88,6 +88,9 @@ typedef struct Options {
   int signal_number;
   gboolean remove_volumes;
   gboolean follow;
+  gboolean logs_tail_set;
+  gboolean logs_tail_all;
+  guint logs_tail;
   gboolean quiet;
   gboolean short_version;
   GPtrArray *services;
@@ -6578,11 +6581,22 @@ static gboolean logs_one(const char *name, YNode *service, void *data) {
   LogsContext *ctx = data;
   char *path = g_strdup_printf("%s/%s.log", ctx->directory, name);
   gchar *contents = NULL;
-  if (!ctx->opts->follow && g_file_get_contents(path, &contents, NULL, NULL)) {
+  if (g_file_get_contents(path, &contents, NULL, NULL)) {
     gchar **lines = g_strsplit(contents, "\n", -1);
+    guint line_count = 0;
+    for (guint i = 0; lines[i]; i++) {
+      line_count += *lines[i] != '\0';
+    }
+    guint skip = ctx->opts->logs_tail_set && !ctx->opts->logs_tail_all &&
+                         line_count > ctx->opts->logs_tail
+                     ? line_count - ctx->opts->logs_tail
+                     : 0;
+    guint line_index = 0;
     for (guint i = 0; lines[i]; i++) {
       if (*lines[i]) {
-        g_print("%s | %s\n", name, lines[i]);
+        if (line_index++ >= skip) {
+          g_print("%s | %s\n", name, lines[i]);
+        }
       }
     }
     g_strfreev(lines);
@@ -6797,9 +6811,36 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       }
     } else if (opts->command && g_str_equal(arg, "-v")) {
       opts->remove_volumes = TRUE;
-    } else if (opts->command && g_str_equal(arg, "-f") &&
+    } else if (opts->command &&
+               (g_str_equal(arg, "-f") || g_str_equal(arg, "--follow")) &&
                g_str_equal(opts->command, "logs")) {
       opts->follow = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "logs") &&
+               (g_str_equal(arg, "-n") || g_str_equal(arg, "--tail") ||
+                g_str_has_prefix(arg, "--tail="))) {
+      const char *value = NULL;
+      if (g_str_has_prefix(arg, "--tail=")) {
+        value = arg + strlen("--tail=");
+      } else if (++i < argc) {
+        value = argv[i];
+      }
+      if (!value || !*value) {
+        fail("logs --tail requires a non-negative line count or 'all'");
+        return FALSE;
+      }
+      opts->logs_tail_set = TRUE;
+      if (g_str_equal(value, "all")) {
+        opts->logs_tail_all = TRUE;
+      } else {
+        char *end = NULL;
+        guint64 count = g_ascii_strtoull(value, &end, 10);
+        if (end == value || *end || count > G_MAXUINT) {
+          fail("logs --tail must be 'all' or a non-negative line count");
+          return FALSE;
+        }
+        opts->logs_tail_all = FALSE;
+        opts->logs_tail = (guint)count;
+      }
     } else if (opts->command && g_str_equal(arg, "-f") &&
                g_str_equal(opts->command, "rm")) {
       /* Docker Compose's rm --force is accepted as a no-op here. */

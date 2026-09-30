@@ -59,7 +59,8 @@ treated as successful.
    * - ``logs``
      - VM-adapted, partial
      - Reads captured serial output; container log drivers and full formatting
-       options do not apply.
+       options do not apply. ``--tail`` and ``-n`` accept a non-negative line
+       count or ``all``; ``-f``/``--follow`` streams subsequent output.
    * - ``config``
      - VM-adapted, partial
      - Validates, resolves, merges, renders, and lists selected Compose model
@@ -451,8 +452,10 @@ nulls as JSON primitives. It validates the merged file against the pinned
 Compose schema before rendering. Schema validation checks file structure and
 syntax; it does not mean every accepted field has a VM runtime implementation.
 ``quocker up -d`` starts all services. ``quocker ps`` shows their state and
-disk overlays. ``quocker logs [SERVICE]`` shows serial output, and
-``quocker logs -f`` follows it. ``quocker down`` stops services while retaining
+disk overlays. ``quocker logs [SERVICE]`` shows serial output;
+``quocker logs --tail 20`` shows only its last twenty non-empty lines, and
+``quocker logs -f``/``--follow`` follows subsequent output.
+``quocker down`` stops services while retaining
 their disks. ``quocker down --volumes`` stops services and removes their
 overlays and project volume disks. ``quocker volume ls`` lists persistent VM
 volumes for the current Compose project with their logical names and virtual
