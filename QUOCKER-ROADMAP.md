@@ -413,8 +413,11 @@ in user-facing compatibility promises.
    interruption/signals.
 4. Match project naming, labels/metadata, project listing, working directory,
    file precedence, exit codes, and common output/TTY behavior.
-5. Support both `quocker compose ...` and any chosen direct aliases without
-   confusing global and subcommand flags.
+5. **Entry-point compatibility verified:** both `quocker compose ...` and the
+   direct `quocker ...` form run through the same option parser; a regression
+   test compares normalized `config` output for both forms. Broader command
+   flag parity, including global versus subcommand flag collisions, remains
+   open.
 6. Specify behavior for Docker Compose integrations or plugins (`watch`,
    `convert`, `alpha`, and future commands); do not silently advertise
    compatibility for unimplemented commands.
