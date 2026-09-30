@@ -64,6 +64,7 @@ typedef struct Options {
   char *project_directory;
   char *command;
   char *config_format;
+  char *config_list_mode;
   char *port_spec;
   gboolean detach;
   gboolean dry_run;
@@ -1152,6 +1153,55 @@ static gboolean json_write_stdout(const YNode *root) {
   json_node_free(document);
   g_object_unref(builder);
   return ok;
+}
+
+static gint compare_string_pointers(gconstpointer left, gconstpointer right) {
+  const char *const *left_string = left;
+  const char *const *right_string = right;
+  return g_strcmp0(*left_string, *right_string);
+}
+
+static gboolean config_write_list(const YNode *config, const char *mode) {
+  GPtrArray *values = g_ptr_array_new_with_free_func(g_free);
+  YNode *services = map_get(config, "services");
+  if (g_strcmp0(mode, "profiles") == 0) {
+    GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
+    for (guint i = 0; services && i < services->items->len; i++) {
+      YPair *service_pair = g_ptr_array_index(services->items, i);
+      YNode *profiles = map_get(service_pair->value, "profiles");
+      if (!profiles) {
+        continue;
+      }
+      guint count = profiles->kind == NODE_SEQUENCE ? profiles->items->len : 1;
+      for (guint j = 0; j < count; j++) {
+        YNode *profile = profiles->kind == NODE_SEQUENCE
+                             ? g_ptr_array_index(profiles->items, j)
+                             : profiles;
+        const char *name = node_string(profile);
+        if (name && *name && !g_hash_table_contains(seen, name)) {
+          g_hash_table_add(seen, (gpointer)name);
+          g_ptr_array_add(values, g_strdup(name));
+        }
+      }
+    }
+    g_hash_table_destroy(seen);
+  } else {
+    for (guint i = 0; services && i < services->items->len; i++) {
+      YPair *service_pair = g_ptr_array_index(services->items, i);
+      const char *name = node_string(service_pair->key);
+      const char *image = node_string(map_get(service_pair->value, "image"));
+      const char *value = g_strcmp0(mode, "services") == 0 ? name : image;
+      if (value && *value) {
+        g_ptr_array_add(values, g_strdup(value));
+      }
+    }
+  }
+  g_ptr_array_sort(values, compare_string_pointers);
+  for (guint i = 0; i < values->len; i++) {
+    g_print("%s\n", (char *)g_ptr_array_index(values, i));
+  }
+  g_ptr_array_free(values, TRUE);
+  return TRUE;
 }
 
 static char *absolute_path(const char *path, const char *base) {
@@ -5059,6 +5109,7 @@ static void usage(FILE *file) {
           "      --env-file FILE         Set interpolation environment file\n"
           "      --profile PROFILE       Enable a service profile\n\n"
           "  config --format yaml|json   Select config output format\n"
+          "  config --services|--profiles|--images  List config entries\n"
           "      --dry-run              Print the dependency-ordered lifecycle plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
           "rm, ps, logs, "
@@ -5174,6 +5225,18 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(arg, "--quiet")) {
       opts->quiet = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "config") &&
+               (g_str_equal(arg, "--services") ||
+                g_str_equal(arg, "--profiles") ||
+                g_str_equal(arg, "--images"))) {
+      const char *mode = arg + 2;
+      if (opts->config_list_mode &&
+          !g_str_equal(opts->config_list_mode, mode)) {
+        fail("config list output options are mutually exclusive");
+        return FALSE;
+      }
+      g_free(opts->config_list_mode);
+      opts->config_list_mode = g_strdup(mode);
+    } else if (opts->command && g_str_equal(opts->command, "config") &&
                g_str_equal(arg, "--format")) {
       if (++i >= argc ||
           (!g_str_equal(argv[i], "yaml") && !g_str_equal(argv[i], "json"))) {
@@ -5215,6 +5278,10 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
   }
   if (!opts->command) {
     usage(stderr);
+    return FALSE;
+  }
+  if (opts->config_list_mode && opts->config_format) {
+    fail("config list output cannot be combined with --format");
     return FALSE;
   }
   if (g_str_equal(opts->command, "port") &&
@@ -5597,9 +5664,11 @@ int main(int argc, char **argv) {
   gboolean ok = FALSE;
   if (g_str_equal(opts.command, "config")) {
     ok = opts.quiet ||
-         (g_strcmp0(opts.config_format, "json") == 0
-              ? json_write_stdout(config)
-              : yaml_write_stdout(config));
+         (opts.config_list_mode
+              ? config_write_list(config, opts.config_list_mode)
+              : (g_strcmp0(opts.config_format, "json") == 0
+                     ? json_write_stdout(config)
+                     : yaml_write_stdout(config)));
   } else if (g_str_equal(opts.command, "up") ||
              g_str_equal(opts.command, "start")) {
     ok = run_up_services(services, &opts, project_lower, root, directory,
@@ -5674,6 +5743,7 @@ int main(int argc, char **argv) {
   g_ptr_array_free(opts.services, TRUE);
   g_free(opts.command);
   g_free(opts.config_format);
+  g_free(opts.config_list_mode);
   g_free(opts.port_spec);
   g_free(opts.project_name);
   g_free(opts.project_directory);

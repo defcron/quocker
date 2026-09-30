@@ -61,6 +61,12 @@ names are lowercased and stripped to those characters. The resolved value is
 written to ``name`` in ``config`` output and exposed as
 ``COMPOSE_PROJECT_NAME`` during file interpolation.
 
+``config --services``, ``config --profiles``, and ``config --images`` print
+the corresponding names one per line in sorted order. Repeated profile names
+are emitted once. These listing modes cannot be combined with ``--format``;
+without a listing option, ``config`` renders YAML by default or JSON with
+``--format json``.
+
 .. code-block:: yaml
 
    name: dev-stack

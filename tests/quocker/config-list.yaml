@@ -1,0 +1,9 @@
+services:
+  zeta:
+    image: registry.example/zeta:latest
+    profiles: [green, blue]
+  app:
+    image: alpine:latest
+  alpha:
+    image: registry.example/alpha:latest
+    profiles: [blue]
