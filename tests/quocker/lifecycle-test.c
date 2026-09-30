@@ -198,6 +198,15 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_true(run_cli(cli, directory, compose, "stop", &output));
   g_assert_nonnull(strstr(output, "app: stopped"));
   g_free(output);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "ps", &output));
+  g_assert_cmpstr(output, ==, "NAME\tSTATE\tPID\tDISK\n");
+  g_free(output);
+  output = NULL;
+  g_assert_true(run_cli_for_project(cli, directory, compose, "lifecycle",
+                                    "app", "ps", "--all", &output));
+  g_assert_nonnull(strstr(output, "lifecycle-app\tstopped"));
+  g_free(output);
   g_assert_false(g_file_test(stale_state, G_FILE_TEST_EXISTS));
   int child_status = 0;
   g_assert_cmpint(waitpid(child, &child_status, 0), ==, child);
@@ -226,6 +235,15 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_true(run_cli(cli, directory, compose, "start", &output));
   g_assert_nonnull(strstr(output, "app: started"));
   g_free(output);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "ps", &output));
+  g_assert_nonnull(strstr(output, "lifecycle-app\trunning"));
+  g_free(output);
+  output = NULL;
+  g_assert_true(run_cli_for_project(cli, directory, compose, "lifecycle",
+                                    "-q", "ps", "app", &output));
+  g_assert_cmpstr(output, ==, "lifecycle-app\n");
+  g_free(output);
   struct stat state_stat;
   g_assert_cmpint(g_stat(state_path, &state_stat), ==, 0);
   g_assert_cmpint(state_stat.st_mode & 0777, ==, 0600);
@@ -242,7 +260,8 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_no_error(error);
   g_free(mismatched_state);
   output = NULL;
-  g_assert_true(run_cli(cli, directory, compose, "ps", &output));
+  g_assert_true(run_cli_for_project(cli, directory, compose, "lifecycle",
+                                    "app", "ps", "--all", &output));
   g_assert_nonnull(strstr(output, "lifecycle-app\tstopped"));
   g_free(output);
   output = NULL;
@@ -258,7 +277,8 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_cmpint(kill(crashed_pid, SIGKILL), ==, 0);
   g_usleep(100000);
   output = NULL;
-  g_assert_true(run_cli(cli, directory, compose, "ps", &output));
+  g_assert_true(run_cli_for_project(cli, directory, compose, "lifecycle",
+                                    "app", "ps", "--all", &output));
   g_assert_nonnull(strstr(output, "lifecycle-app\tstopped"));
   g_free(output);
   output = NULL;

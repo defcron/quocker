@@ -68,7 +68,7 @@ _quocker() {
             fi
             ;;
         ps)
-            command_options='-q --quiet'
+            command_options='-a --all -q --quiet'
             ;;
         rm)
             command_options='--volumes -v -f'

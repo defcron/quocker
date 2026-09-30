@@ -95,6 +95,7 @@ typedef struct Options {
   guint logs_tail;
   gboolean logs_no_prefix;
   gboolean quiet;
+  gboolean ps_all;
   gboolean short_version;
   GPtrArray *services;
 } Options;
@@ -5318,6 +5319,7 @@ for_services(YNode *services, Options *opts,
     gboolean selected = service_requested(opts, name);
     if (!selected ||
         (opts->services->len == 0 &&
+         !g_str_equal(opts->command, "ps") &&
          !service_profile_enabled(pair->value, opts))) {
       continue;
     }
@@ -6426,17 +6428,60 @@ typedef struct ListContext {
   const char *project;
   const char *directory;
   gboolean quiet;
+  gboolean all;
 } ListContext;
 
 static gboolean ps_one(const char *name, YNode *service, void *data) {
+  (void)service;
   ListContext *ctx = data;
+  char *saved_state = state_path(ctx->directory, name);
+  struct stat state_stat;
+  if (g_lstat(saved_state, &state_stat) < 0) {
+    int saved_errno = errno;
+    g_free(saved_state);
+    if (saved_errno == ENOENT) {
+      return TRUE;
+    }
+    fail("service '%s': could not inspect saved VM state: %s", name,
+         g_strerror(saved_errno));
+    return FALSE;
+  }
+  if (!S_ISREG(state_stat.st_mode) || state_stat.st_uid != geteuid() ||
+      state_stat.st_size <= 0 || state_stat.st_size > 4096) {
+    fail("service '%s': saved VM state is malformed or unsafe", name);
+    g_free(saved_state);
+    return FALSE;
+  }
+  gchar *contents = state_contents_read(ctx->directory, name);
+  gboolean contents_valid = contents != NULL;
+  g_free(contents);
   pid_t pid = read_pid(ctx->directory, name);
-  gboolean active = process_running(pid, ctx->project, name, state_process_start_time(ctx->directory, name));
-  if (ctx->quiet) {
-    g_print("%s-%s\n", ctx->project, name);
+  char *overlay = state_disk_basename(ctx->directory, name);
+  char *disk = overlay ? g_build_filename(ctx->directory, overlay, NULL) : NULL;
+  struct stat disk_stat;
+  if (!contents_valid || pid <= 1 || !disk || g_lstat(disk, &disk_stat) < 0 ||
+      !S_ISREG(disk_stat.st_mode) || disk_stat.st_uid != geteuid()) {
+    fail("service '%s': saved VM state or overlay is malformed or unsafe",
+         name);
+    g_free(saved_state);
+    g_free(overlay);
+    g_free(disk);
+    return FALSE;
+  }
+  g_free(saved_state);
+  g_free(overlay);
+  gboolean active = process_running(
+      pid, ctx->project, name,
+      state_process_start_time(ctx->directory, name));
+  if (!active && !ctx->all) {
+    g_free(disk);
     return TRUE;
   }
-  char *disk = find_service_overlay(ctx->directory, name);
+  if (ctx->quiet) {
+    g_print("%s-%s\n", ctx->project, name);
+    g_free(disk);
+    return TRUE;
+  }
   char *pid_text = active ? g_strdup_printf("%d", pid) : g_strdup("-");
   g_print("%s-%s\t%s\t%s\t%s\n", ctx->project, name,
           active ? "running" : "stopped", pid_text, disk ? disk : "-");
@@ -6793,6 +6838,7 @@ static void usage(FILE *file) {
           "      --profile PROFILE       Enable a service profile\n\n"
           "  up --wait [--wait-timeout SEC] Wait for guest workloads to be ready\n"
           "  stop|restart|down -t, --timeout SEC Graceful stop timeout\n"
+          "  ps -a, --all              Include stopped saved VMs\n"
           "  config --format yaml|json   Select config output format\n"
           "  config -o, --output FILE   Write rendered config to a file\n"
           "  config --services|--profiles|--images  List config entries\n"
@@ -6999,6 +7045,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
                (g_str_equal(arg, "-q") || g_str_equal(arg, "--quiet"))) {
       opts->quiet = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "ps") &&
+               (g_str_equal(arg, "-a") || g_str_equal(arg, "--all"))) {
+      opts->ps_all = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "version") &&
                g_str_equal(arg, "--short")) {
       opts->short_version = TRUE;
@@ -7718,7 +7767,7 @@ int main(int argc, char **argv) {
     if (!opts.quiet) {
       g_print("NAME\tSTATE\tPID\tDISK\n");
     }
-    ListContext context = {project_lower, directory, opts.quiet};
+    ListContext context = {project_lower, directory, opts.quiet, opts.ps_all};
     ok = for_services(services, &opts, ps_one, &context);
   } else if (g_str_equal(opts.command, "images")) {
     g_print("SERVICE\tIMAGE\tVM_STATE\n");

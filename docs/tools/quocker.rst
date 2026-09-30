@@ -154,10 +154,11 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
      - ``--remove-orphans`` and ``--rmi``. See the
        `Compose down reference <https://docs.docker.com/reference/cli/docker/compose/down/>`_.
    * - ``ps``
-     - Service names; output is a Quocker VM table with saved state, PID,
-       and disk path. ``-q``/``--quiet`` prints generated VM names, one per
+     - Service names; by default lists running saved VMs. ``-a``/``--all``
+       includes stopped VMs with saved state. Output includes VM state, PID,
+       and disk path; ``-q``/``--quiet`` prints generated VM names, one per
        line.
-     - ``--all``, ``--filter``, ``--format``, ``--no-trunc``, ``--orphans``,
+     - ``--filter``, ``--format``, ``--no-trunc``, ``--orphans``,
        ``--services``, and ``--status``. Project selection uses Quocker's
        shared ``-p``/``--project-name`` option. See the
        `Compose ps reference <https://docs.docker.com/reference/cli/docker/compose/ps/>`_.
@@ -552,8 +553,9 @@ the rendered document to a file instead of standard output. Quocker writes a
 private temporary file in the destination directory and renames it into place
 after serialization succeeds. Schema validation checks file structure and
 syntax; it does not mean every accepted field has a VM runtime implementation.
-``quocker up -d`` starts all services. ``quocker ps`` shows their state and
-disk overlays. ``quocker logs [SERVICE]`` shows serial output;
+``quocker up -d`` starts all services. ``quocker ps`` lists running VMs;
+``quocker ps --all`` includes stopped VMs that still have saved state.
+``quocker logs [SERVICE]`` shows serial output;
 ``quocker logs --tail 20`` shows only its last twenty non-empty lines.
 ``quocker logs --no-log-prefix`` omits the service name prefix, and
 ``quocker logs -f``/``--follow`` follows subsequent output using the same

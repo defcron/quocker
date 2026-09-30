@@ -387,7 +387,8 @@ in user-facing compatibility promises.
    partial, or unimplemented behavior and records the implemented per-command
    options plus the major unsupported options, using official CLI references
    checked on 2026-09-30. `ps -q`/`--quiet` now prints generated VM names, with
-   regression coverage. Keep this inventory current as flags are implemented;
+   `ps` defaults to running saved VMs and accepts `-a`/`--all` to include
+   stopped VMs. Keep this inventory current as flags are implemented;
    fill in exact option-by-option coverage for less common Compose commands.
 2. Complete core commands and their normal flags: `up`, `down`, `ps`, `logs`,
    `config`, `start`, `stop`, `restart`, `kill`, `rm`, `pause`, `unpause`,
@@ -623,10 +624,10 @@ in user-facing compatibility promises.
    and validates them with the PID and QEMU name; signals use pidfds when
    supported and otherwise revalidate immediately before signaling. QEMU gets
    a private per-VM QMP socket for pause/resume. A fake-QEMU regression now
-   kills a running VM abruptly, confirms `ps` reports it stopped, and restarts
-   it from saved state. Recover stale state safely when a PID has been reused,
-   close the fallback race on older kernels where possible, cover daemon
-   restarts, and finish concurrent CLI invocation locking.
+   kills a running VM abruptly, confirms `ps --all` reports it stopped, and
+   restarts it from saved state. Recover stale state safely when a PID has been
+   reused, close the fallback race on older kernels where possible, cover
+   daemon restarts, and finish concurrent CLI invocation locking.
 2. Define foreground and detached modes, console access, serial/agent logs,
    log rotation, event streams, and cleanup on signals.
 3. Run QEMU with least privilege and a reviewed sandbox configuration. Define
