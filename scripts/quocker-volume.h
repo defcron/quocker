@@ -29,6 +29,8 @@ gboolean quocker_volume_list(const char *project_directory,
 
 gboolean quocker_volume_remove(const char *project_directory,
                                const char *logical_name, GError **error);
+gboolean quocker_volume_remove_all(const char *project_directory,
+                                   GError **error);
 
 gboolean quocker_volume_project_usage(const char *project_directory,
                                       guint64 *virtual_bytes,

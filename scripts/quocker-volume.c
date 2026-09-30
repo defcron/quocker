@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <glib/gstdio.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -191,8 +192,67 @@ static gboolean configured_volume_quota(guint64 *quota_bytes, GError **error) {
   return TRUE;
 }
 
-gboolean quocker_volume_list(const char *project_directory,
-                             GPtrArray **volumes_out, GError **error) {
+static int volume_lock_acquire(const char *project_directory,
+                               gboolean create_directory, gboolean exclusive,
+                               GError **error) {
+  char *volume_directory = g_build_filename(project_directory, "volumes", NULL);
+  if (create_directory && g_mkdir_with_parents(volume_directory, 0700) < 0) {
+    volume_error(error, "could not create the project volume directory");
+    g_free(volume_directory);
+    return -1;
+  }
+  struct stat directory_stat;
+  if (g_lstat(volume_directory, &directory_stat) < 0) {
+    if (!create_directory && errno == ENOENT) {
+      g_free(volume_directory);
+      return -2;
+    }
+    volume_error(error, "could not inspect the project volume directory");
+    g_free(volume_directory);
+    return -1;
+  }
+  if (!S_ISDIR(directory_stat.st_mode) || S_ISLNK(directory_stat.st_mode) ||
+      (directory_stat.st_mode & 0077)) {
+    volume_error(error, "project volume directory is unsafe");
+    g_free(volume_directory);
+    return -1;
+  }
+  char *lock_path = g_build_filename(volume_directory, ".quocker.lock", NULL);
+  int fd = open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+  g_free(lock_path);
+  g_free(volume_directory);
+  if (fd < 0) {
+    volume_error(error, "could not open the project volume lock");
+    return -1;
+  }
+  struct stat lock_stat;
+  if (fstat(fd, &lock_stat) < 0 || !S_ISREG(lock_stat.st_mode) ||
+      lock_stat.st_uid != geteuid() || (lock_stat.st_mode & 0077)) {
+    volume_error(error, "project volume lock is unsafe");
+    close(fd);
+    return -1;
+  }
+  int operation = exclusive ? LOCK_EX : LOCK_SH;
+  while (flock(fd, operation) < 0) {
+    if (errno == EINTR) {
+      continue;
+    }
+    volume_error(error, "could not lock the project volumes");
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+static void volume_lock_release(int lock_fd) {
+  if (lock_fd >= 0) {
+    flock(lock_fd, LOCK_UN);
+    close(lock_fd);
+  }
+}
+
+static gboolean volume_list_unlocked(const char *project_directory,
+                                     GPtrArray **volumes_out, GError **error) {
   if (error) {
     *error = NULL;
   }
@@ -267,10 +327,30 @@ gboolean quocker_volume_list(const char *project_directory,
   return TRUE;
 }
 
-gboolean quocker_volume_project_usage(const char *project_directory,
-                                      guint64 *virtual_bytes,
-                                      guint64 *allocated_bytes,
-                                      guint64 *quota_bytes, GError **error) {
+gboolean quocker_volume_list(const char *project_directory,
+                             GPtrArray **volumes_out, GError **error) {
+  if (error) {
+    *error = NULL;
+  }
+  if (!project_directory || !g_path_is_absolute(project_directory) ||
+      !volumes_out) {
+    volume_error(error, "project volume directory is invalid");
+    return FALSE;
+  }
+  int lock_fd = volume_lock_acquire(project_directory, FALSE, FALSE, error);
+  if (lock_fd == -1) {
+    return FALSE;
+  }
+  gboolean ok = volume_list_unlocked(project_directory, volumes_out, error);
+  volume_lock_release(lock_fd);
+  return ok;
+}
+
+static gboolean volume_project_usage_unlocked(const char *project_directory,
+                                              guint64 *virtual_bytes,
+                                              guint64 *allocated_bytes,
+                                              guint64 *quota_bytes,
+                                              GError **error) {
   if (error) {
     *error = NULL;
   }
@@ -285,7 +365,7 @@ gboolean quocker_volume_project_usage(const char *project_directory,
     return FALSE;
   }
   GPtrArray *volumes = NULL;
-  if (!quocker_volume_list(project_directory, &volumes, error)) {
+  if (!volume_list_unlocked(project_directory, &volumes, error)) {
     return FALSE;
   }
   gboolean valid = TRUE;
@@ -304,6 +384,27 @@ gboolean quocker_volume_project_usage(const char *project_directory,
   return valid;
 }
 
+gboolean quocker_volume_project_usage(const char *project_directory,
+                                      guint64 *virtual_bytes,
+                                      guint64 *allocated_bytes,
+                                      guint64 *quota_bytes, GError **error) {
+  if (error) {
+    *error = NULL;
+  }
+  if (!project_directory || !g_path_is_absolute(project_directory)) {
+    volume_error(error, "project volume directory is invalid");
+    return FALSE;
+  }
+  int lock_fd = volume_lock_acquire(project_directory, FALSE, FALSE, error);
+  if (lock_fd == -1) {
+    return FALSE;
+  }
+  gboolean ok = volume_project_usage_unlocked(
+      project_directory, virtual_bytes, allocated_bytes, quota_bytes, error);
+  volume_lock_release(lock_fd);
+  return ok;
+}
+
 gboolean quocker_volume_remove(const char *project_directory,
                                const char *logical_name, GError **error) {
   if (error) {
@@ -314,8 +415,13 @@ gboolean quocker_volume_remove(const char *project_directory,
     volume_error(error, "project volume directory or name is invalid");
     return FALSE;
   }
+  int lock_fd = volume_lock_acquire(project_directory, FALSE, TRUE, error);
+  if (lock_fd == -1) {
+    return FALSE;
+  }
   GPtrArray *volumes = NULL;
-  if (!quocker_volume_list(project_directory, &volumes, error)) {
+  if (!volume_list_unlocked(project_directory, &volumes, error)) {
+    volume_lock_release(lock_fd);
     return FALSE;
   }
   QuockerVolumeInfo *selected = NULL;
@@ -329,6 +435,7 @@ gboolean quocker_volume_remove(const char *project_directory,
   if (!selected) {
     volume_error(error, "volume does not exist in this Compose project");
     g_ptr_array_free(volumes, TRUE);
+    volume_lock_release(lock_fd);
     return FALSE;
   }
   char *metadata_path = g_strconcat(selected->disk_path, ".name", NULL);
@@ -340,6 +447,43 @@ gboolean quocker_volume_remove(const char *project_directory,
   }
   g_free(metadata_path);
   g_ptr_array_free(volumes, TRUE);
+  volume_lock_release(lock_fd);
+  return removed;
+}
+
+gboolean quocker_volume_remove_all(const char *project_directory,
+                                   GError **error) {
+  if (error) {
+    *error = NULL;
+  }
+  if (!project_directory || !g_path_is_absolute(project_directory)) {
+    volume_error(error, "project volume directory is invalid");
+    return FALSE;
+  }
+  int lock_fd = volume_lock_acquire(project_directory, FALSE, TRUE, error);
+  if (lock_fd == -1) {
+    return FALSE;
+  }
+  GPtrArray *volumes = NULL;
+  if (!volume_list_unlocked(project_directory, &volumes, error)) {
+    volume_lock_release(lock_fd);
+    return FALSE;
+  }
+  gboolean removed = TRUE;
+  for (guint i = 0; i < volumes->len; i++) {
+    QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
+    char *metadata_path = g_strconcat(info->disk_path, ".name", NULL);
+    if (g_unlink(info->disk_path) < 0) {
+      volume_error(error, "could not remove a project volume disk");
+      removed = FALSE;
+      g_free(metadata_path);
+      break;
+    }
+    g_unlink(metadata_path);
+    g_free(metadata_path);
+  }
+  g_ptr_array_free(volumes, TRUE);
+  volume_lock_release(lock_fd);
   return removed;
 }
 
@@ -374,6 +518,11 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
     g_free(volume_directory);
     return FALSE;
   }
+  int lock_fd = volume_lock_acquire(project_directory, TRUE, TRUE, error);
+  if (lock_fd < 0) {
+    g_free(volume_directory);
+    return FALSE;
+  }
   char *digest =
       g_compute_checksum_for_string(G_CHECKSUM_SHA256, logical_name, -1);
   char *disk_path = g_strdup_printf("%s/%s.ext4", volume_directory, digest);
@@ -382,25 +531,29 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
     if (!volume_disk_valid(disk_path)) {
       volume_error(error, "existing project volume is not a safe ext4 disk");
       g_free(disk_path);
+      volume_lock_release(lock_fd);
       g_free(volume_directory);
       return FALSE;
     }
     if (!volume_metadata_write(disk_path, logical_name)) {
       volume_error(error, "could not record the volume's logical name");
       g_free(disk_path);
+      volume_lock_release(lock_fd);
       g_free(volume_directory);
       return FALSE;
     }
     *disk_path_out = disk_path;
+    volume_lock_release(lock_fd);
     g_free(volume_directory);
     return TRUE;
   }
   guint64 virtual_used = 0;
   guint64 allocated_used = 0;
   guint64 quota = 0;
-  if (!quocker_volume_project_usage(project_directory, &virtual_used,
-                                    &allocated_used, &quota, error)) {
+  if (!volume_project_usage_unlocked(project_directory, &virtual_used,
+                                     &allocated_used, &quota, error)) {
     g_free(disk_path);
+    volume_lock_release(lock_fd);
     g_free(volume_directory);
     return FALSE;
   }
@@ -411,6 +564,7 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
                 " bytes, quota %" G_GUINT64_FORMAT " bytes)",
                 virtual_used, size_bytes, quota);
     g_free(disk_path);
+    volume_lock_release(lock_fd);
     g_free(volume_directory);
     return FALSE;
   }
@@ -423,6 +577,7 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
     volume_error(error, "could not allocate a bounded sparse volume disk");
     g_free(temporary_path);
     g_free(disk_path);
+    volume_lock_release(lock_fd);
     g_free(volume_directory);
     return FALSE;
   }
@@ -450,6 +605,7 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
     g_unlink(temporary_path);
     g_free(temporary_path);
     g_free(disk_path);
+    volume_lock_release(lock_fd);
     g_free(volume_directory);
     return FALSE;
   }
@@ -458,6 +614,7 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
     g_unlink(temporary_path);
     g_free(temporary_path);
     g_free(disk_path);
+    volume_lock_release(lock_fd);
     g_free(volume_directory);
     return FALSE;
   }
@@ -466,16 +623,19 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
   if (!volume_disk_valid(disk_path)) {
     volume_error(error, "published volume disk failed ext4 validation");
     g_free(disk_path);
+    volume_lock_release(lock_fd);
     g_free(volume_directory);
     return FALSE;
   }
   if (!volume_metadata_write(disk_path, logical_name)) {
     volume_error(error, "could not record the volume's logical name");
     g_free(disk_path);
+    volume_lock_release(lock_fd);
     g_free(volume_directory);
     return FALSE;
   }
   *disk_path_out = disk_path;
+  volume_lock_release(lock_fd);
   g_free(volume_directory);
   return TRUE;
 }

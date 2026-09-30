@@ -5302,29 +5302,15 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
       }
     }
     if (project_stopped) {
-      char *volume_directory =
-          g_build_filename(ctx->directory, "volumes", NULL);
-      struct stat volume_directory_stat;
-      GDir *volumes = g_lstat(volume_directory, &volume_directory_stat) == 0 &&
-                              S_ISDIR(volume_directory_stat.st_mode)
-                          ? g_dir_open(volume_directory, 0, NULL)
-                          : NULL;
-      const char *volume_entry;
-      while (volumes && (volume_entry = g_dir_read_name(volumes))) {
-        char *volume_path =
-            g_build_filename(volume_directory, volume_entry, NULL);
-        struct stat volume_stat;
-        if (g_lstat(volume_path, &volume_stat) == 0 &&
-            S_ISREG(volume_stat.st_mode)) {
-          g_unlink(volume_path);
-        }
-        g_free(volume_path);
+      GError *volume_error = NULL;
+      if (!quocker_volume_remove_all(ctx->directory, &volume_error)) {
+        fail("project volumes could not be removed: %s",
+             volume_error ? volume_error->message : "unknown volume error");
+        g_clear_error(&volume_error);
+        g_free(state);
+        g_free(pidfile);
+        return FALSE;
       }
-      if (volumes) {
-        g_dir_close(volumes);
-        g_rmdir(volume_directory);
-      }
-      g_free(volume_directory);
     }
   }
   g_free(state);

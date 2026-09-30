@@ -469,12 +469,15 @@ in user-facing compatibility promises.
 3. **Partially implemented:** volumes are created on demand with logical-name
    metadata, listed and inspected per project, and removed with ``down
    --volumes`` or ``quocker volume rm``. Removal has a dry-run preview and
-   refuses while a project service has a live or unverified PID. Richer
-   ownership records, crash recovery, and safeguards against concurrent
-   management commands remain to be implemented.
+   refuses while a project service has a live or unverified PID. A project
+   lock now serializes disk creation/removal and quota checks across Quocker
+   processes. Richer ownership records, crash recovery, and serialization of
+   the wider VM lifecycle remain to be implemented.
 4. **Partially implemented:** project-scoped volume disk quotas default to
    20 GiB and are configurable with ``QUOCKER_VOLUME_QUOTA``; ``volume ls``
    and ``volume df`` report virtual capacity and actual filesystem allocation.
+   Volume creation and removal use a project lock so concurrent creates cannot
+   exceed the quota.
    Global cache quotas, per-image accounting, retention policies, and garbage
    collection remain to be implemented.
 5. Handle backing-chain compaction, snapshots, consistency, concurrent access,

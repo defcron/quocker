@@ -176,6 +176,9 @@ that limit and accepts byte, KiB, MiB, GiB, or TiB sizes. Set it to ``0`` for
 no limit. The quota counts virtual disk capacity, while ``volume ls`` and
 ``volume df`` also report filesystem allocated bytes so sparse disk growth is
 visible. The quota is checked before each new disk is created.
+Volume creation and removal are serialized with a project lock, including the
+quota check, so concurrent Quocker processes cannot create volumes past the
+configured limit.
 ``down`` preserves these disks; ``down --volumes`` removes project volume disks
 after all project VMs have stopped. Bind mounts, tmpfs, external volumes,
 non-local drivers, driver options, and long-form volume suboptions are

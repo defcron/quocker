@@ -3,7 +3,23 @@
 #include <fcntl.h>
 #include <glib/gstdio.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+static int create_volume_child(const char *directory, const char *name) {
+  char *path = NULL;
+  GError *error = NULL;
+  gboolean created = quocker_volume_disk_prepare(
+      directory, name, 64 * 1024 * 1024, &path, &error);
+  g_free(path);
+  if (created) {
+    g_clear_error(&error);
+    return 0;
+  }
+  gboolean quota = error && strstr(error->message, "quota exceeded");
+  g_clear_error(&error);
+  return quota ? 10 : 11;
+}
 
 static gchar *run_volume_command(const char *cli, const char *project,
                                  const char *compose, const char *action,
@@ -75,6 +91,36 @@ int main(void) {
   g_assert_error(error, g_quark_from_static_string("quocker-volume-error"), 1);
   g_clear_error(&error);
   g_setenv("QUOCKER_VOLUME_QUOTA", "128MiB", TRUE);
+
+  pid_t children[2];
+  const char *parallel_names[] = {"project:parallel-a", "project:parallel-b"};
+  for (guint i = 0; i < G_N_ELEMENTS(children); i++) {
+    children[i] = fork();
+    g_assert_cmpint(children[i], >=, 0);
+    if (children[i] == 0) {
+      _exit(create_volume_child(directory, parallel_names[i]));
+    }
+  }
+  guint successes = 0;
+  guint quota_rejections = 0;
+  for (guint i = 0; i < G_N_ELEMENTS(children); i++) {
+    int child_status = 0;
+    g_assert_cmpint(waitpid(children[i], &child_status, 0), ==, children[i]);
+    g_assert_true(WIFEXITED(child_status));
+    if (WEXITSTATUS(child_status) == 0) {
+      successes++;
+    } else if (WEXITSTATUS(child_status) == 10) {
+      quota_rejections++;
+    } else {
+      g_assert_not_reached();
+    }
+  }
+  g_assert_cmpuint(successes, ==, 1);
+  g_assert_cmpuint(quota_rejections, ==, 1);
+  g_assert_true(quocker_volume_project_usage(
+      directory, &virtual_bytes, &allocated_bytes, &quota_bytes, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(virtual_bytes, ==, 128 * 1024 * 1024);
   char *second = NULL;
   g_assert_true(quocker_volume_disk_prepare(
       directory, "project:data", 128 * 1024 * 1024, &second, &error));
@@ -90,14 +136,16 @@ int main(void) {
   g_clear_error(&error);
 
   char *volume_directory = g_build_filename(directory, "volumes", NULL);
-  char *metadata_path = g_strconcat(first, ".name", NULL);
-  g_assert_cmpint(g_unlink(metadata_path), ==, 0);
-  g_assert_cmpint(g_unlink(first), ==, 0);
+  g_assert_true(quocker_volume_remove_all(directory, &error));
+  g_assert_no_error(error);
+  g_assert_false(g_file_test(first, G_FILE_TEST_EXISTS));
+  char *lock_path = g_build_filename(volume_directory, ".quocker.lock", NULL);
+  g_assert_cmpint(g_unlink(lock_path), ==, 0);
   g_assert_cmpint(g_rmdir(volume_directory), ==, 0);
   g_assert_cmpint(g_rmdir(directory), ==, 0);
   g_free(volume_directory);
+  g_free(lock_path);
   g_free(second);
-  g_free(metadata_path);
   g_free(first);
   g_free(directory);
 
@@ -179,6 +227,8 @@ int main(void) {
     g_free(stdout_text);
     g_assert_false(g_file_test(disk, G_FILE_TEST_EXISTS));
     g_assert_false(g_file_test(metadata, G_FILE_TEST_EXISTS));
+    char *cli_lock_path = g_build_filename(volume_dir, ".quocker.lock", NULL);
+    g_assert_cmpint(g_unlink(cli_lock_path), ==, 0);
     g_assert_cmpint(g_rmdir(volume_dir), ==, 0);
     g_assert_cmpint(g_rmdir(quocker_state), ==, 0);
     char *metadata_root = g_build_filename(project, ".quocker", NULL);
@@ -187,6 +237,7 @@ int main(void) {
     g_assert_cmpint(g_rmdir(project), ==, 0);
     g_free(metadata_root);
     g_free(volume_dir);
+    g_free(cli_lock_path);
     g_free(metadata);
     g_free(disk);
     g_free(quocker_state);

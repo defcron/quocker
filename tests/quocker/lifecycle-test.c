@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <signal.h>
@@ -213,11 +214,26 @@ static void test_stop_preserves_vm_state(void) {
   char *volume_disk =
       g_build_filename(volumes_directory, "persistent.ext4", NULL);
   g_assert_cmpint(g_mkdir(volumes_directory, 0700), ==, 0);
-  g_assert_true(g_file_set_contents(volume_disk, "disk", -1, &error));
+  int volume_fd = open(volume_disk, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+  g_assert_cmpint(volume_fd, >=, 0);
+  g_assert_cmpint(ftruncate(volume_fd, 64 * 1024 * 1024), ==, 0);
+  g_assert_cmpint(close(volume_fd), ==, 0);
+  const char *mkfs_arguments[] = {"mke2fs", "-q", "-t",        "ext4", "-F",
+                                  "-m",     "0",  volume_disk, NULL};
+  gint mkfs_status = 0;
+  g_assert_true(g_spawn_sync(NULL, (char **)mkfs_arguments, NULL,
+                             G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL,
+                             &mkfs_status, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_spawn_check_wait_status(mkfs_status, &error));
   g_assert_no_error(error);
   g_assert_true(remove_cli_volumes(cli, directory, compose));
   g_assert_false(g_file_test(volume_disk, G_FILE_TEST_EXISTS));
-  g_assert_false(g_file_test(volumes_directory, G_FILE_TEST_EXISTS));
+  g_assert_true(g_file_test(volumes_directory, G_FILE_TEST_IS_DIR));
+  char *volume_lock =
+      g_build_filename(volumes_directory, ".quocker.lock", NULL);
+  g_assert_cmpint(g_unlink(volume_lock), ==, 0);
+  g_assert_cmpint(g_rmdir(volumes_directory), ==, 0);
 
   g_assert_false(g_file_test(overlay_sidecar, G_FILE_TEST_EXISTS));
   g_assert_false(g_file_test(overlay_disk, G_FILE_TEST_EXISTS));
@@ -228,6 +244,7 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_cmpint(g_rmdir(quocker_directory), ==, 0);
   g_assert_cmpint(g_rmdir(directory), ==, 0);
   g_free(quocker_directory);
+  g_free(volume_lock);
   g_free(volume_disk);
   g_free(volumes_directory);
   g_free(state_path);
