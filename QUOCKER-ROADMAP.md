@@ -401,6 +401,9 @@ in user-facing compatibility promises.
    `config --variables` reports referenced variable names, required markers,
    default and alternate values, including references found in included and
    extended Compose files.
+   Normalized `config` output adds the implicit project default network;
+   `--no-normalize` suppresses that generated output while leaving path
+   resolution intact.
    `--no-path-resolution` preserves service env-file paths, local build and
    additional contexts, short and long bind sources, top-level config and
    secret file paths, and included or extended model paths; broader path-valued

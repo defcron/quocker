@@ -103,6 +103,7 @@ typedef struct Options {
   gboolean config_no_env_resolution;
   gboolean config_no_interpolate;
   gboolean config_no_path_resolution;
+  gboolean config_no_normalize;
   int signal_number;
   gboolean remove_volumes;
   gboolean remove_orphans;
@@ -1972,6 +1973,52 @@ static gboolean config_write_variables(void) {
             variable->alternate_value ? variable->alternate_value : "");
   }
   return TRUE;
+}
+
+static void config_add_default_network(YNode *config,
+                                       const char *project_name) {
+  YNode *services = map_get(config, "services");
+  if (!services || services->kind != NODE_MAPPING) {
+    return;
+  }
+  gboolean needs_default = FALSE;
+  for (guint i = 0; i < services->items->len; i++) {
+    YPair *pair = g_ptr_array_index(services->items, i);
+    if (!map_get(pair->value, "networks")) {
+      needs_default = TRUE;
+      break;
+    }
+  }
+  if (!needs_default) {
+    return;
+  }
+  YNode *networks = map_get(config, "networks");
+  if (!networks) {
+    networks = node_new(NODE_MAPPING, TAG_MAP);
+    map_set(config, "networks", networks);
+  }
+  if (networks->kind != NODE_MAPPING) {
+    return;
+  }
+  if (!map_get(networks, "default")) {
+    YNode *default_network = node_new(NODE_MAPPING, TAG_MAP);
+    YNode *network_name = node_new(NODE_SCALAR, TAG_STR);
+    network_name->scalar = g_strdup_printf("%s_default", project_name);
+    map_set(default_network, "name", network_name);
+    map_set(default_network, "ipam", node_new(NODE_MAPPING, TAG_MAP));
+    map_set(networks, "default", default_network);
+  }
+  for (guint i = 0; i < services->items->len; i++) {
+    YPair *pair = g_ptr_array_index(services->items, i);
+    if (map_get(pair->value, "networks")) {
+      continue;
+    }
+    YNode *service_networks = node_new(NODE_MAPPING, TAG_MAP);
+    YNode *default_reference = node_new(NODE_SCALAR, TAG_NULL);
+    default_reference->scalar = g_strdup("null");
+    map_set(service_networks, "default", default_reference);
+    map_set(pair->value, "networks", service_networks);
+  }
 }
 
 static char *absolute_path(const char *path, const char *base) {
@@ -7858,6 +7905,7 @@ static void usage(FILE *file) {
           "  config --no-env-resolution Retain normalized env_file paths\n"
           "  config --no-interpolate    Preserve variable expressions\n"
           "  config --no-path-resolution Keep config file paths relative\n"
+          "  config --no-normalize     Skip implicit default network output\n"
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
@@ -8095,6 +8143,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(opts->command, "config") &&
                g_str_equal(arg, "--no-path-resolution")) {
       opts->config_no_path_resolution = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "config") &&
+               g_str_equal(arg, "--no-normalize")) {
+      opts->config_no_normalize = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
                (g_str_equal(arg, "-q") || g_str_equal(arg, "--quiet"))) {
       opts->quiet = TRUE;
@@ -9036,6 +9087,9 @@ int main(int argc, char **argv) {
   }
   gboolean ok = FALSE;
   if (g_str_equal(opts.command, "config")) {
+    if (!opts.config_no_normalize && !opts.config_list_mode && !opts.quiet) {
+      config_add_default_network(config, project_lower);
+    }
     ok = opts.config_output_path
              ? config_write_atomic(config, opts.config_format,
                                    opts.config_output_path)

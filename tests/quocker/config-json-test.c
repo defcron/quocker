@@ -25,6 +25,12 @@ int main(int argc, char **argv) {
   g_assert_true(json_parser_load_from_data(parser, output, -1, &error));
   g_assert_no_error(error);
   JsonObject *root = json_node_get_object(json_parser_get_root(parser));
+  JsonObject *networks = json_object_get_object_member(root, "networks");
+  JsonObject *default_network =
+      json_object_get_object_member(networks, "default");
+  g_assert_cmpstr(json_object_get_string_member(default_network, "name"), ==,
+                  "json-test_default");
+  g_assert_nonnull(json_object_get_object_member(default_network, "ipam"));
   char *resource_directory = g_path_get_dirname(argv[1]);
   char *config_file =
       g_build_filename(resource_directory, "config-json-config.txt", NULL);
@@ -329,6 +335,32 @@ int main(int argc, char **argv) {
   g_assert_nonnull(strstr(output, "QUOCKER_BASE_LABEL"));
   g_free(variables_fixture);
   g_free(fixture_directory_for_variables);
+
+  char *no_normalize_arguments[] = {
+      (char *)cli, (char *)"-f", argv[1], (char *)"config",
+      (char *)"--no-normalize", (char *)"--format", (char *)"json", NULL};
+  g_setenv("QUOCKER_VARIABLE_REQUIRED", "provided", TRUE);
+  g_free(output);
+  g_free(stderr_text);
+  output = NULL;
+  stderr_text = NULL;
+  status = 0;
+  g_assert_true(g_spawn_sync(NULL, no_normalize_arguments, NULL,
+                             G_SPAWN_DEFAULT, NULL, NULL, &output,
+                             &stderr_text, &status, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_spawn_check_wait_status(status, &error));
+  g_assert_no_error(error);
+  g_assert_true(json_parser_load_from_data(parser, output, -1, &error));
+  g_assert_no_error(error);
+  root = json_node_get_object(json_parser_get_root(parser));
+  g_assert_false(json_object_has_member(root, "networks"));
+  services = json_object_get_object_member(root, "services");
+  app = json_object_get_object_member(services, "app");
+  g_assert_false(json_object_has_member(app, "networks"));
+  build = json_object_get_object_member(app, "build");
+  g_assert_true(g_path_is_absolute(
+      json_object_get_string_member(build, "context")));
 
   g_object_unref(parser);
   g_free(stderr_text);
