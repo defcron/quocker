@@ -88,8 +88,8 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite now has 36 focused tests; its latest complete run reported 21
-  passes and 15 expected failures.
+  Meson suite currently has 39 focused tests; its latest run reported 24
+  passes, 15 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
   ownership and extended-attribute metadata, traversal and symlink-parent
@@ -210,7 +210,7 @@ process/state recovery, cleanup, and packaging need more coverage and review.
 OCI service ``env_file`` now supports ordered path lists, interpolation,
 optional long-form files, raw format, and service-environment precedence in C;
 explicit unresolved environment entries remove image defaults. The current
-The Quocker suite contains 37 tests: 23 pass, 14 produce expected failures,
+The Quocker suite contains 39 tests: 24 pass, 15 produce expected failures,
 and none fail unexpectedly. It includes JSON config serialization, static and
 dynamic port queries, plus a fake-QEMU lifecycle integration
 test covering stop, start, down, pause, unpause, kill, state preservation, and
@@ -306,9 +306,9 @@ in user-facing compatibility promises.
    resume use QMP, and the fake-QEMU integration test exercises these commands.
    Crash recovery and complete flag compatibility remain unfinished. Implement only after Phase 0 defines
    VM semantics; explain commands with no meaningful VM equivalent.
-   `port SERVICE PRIVATE_PORT[/PROTOCOL]` now reports configured static host
-   bindings through the validated QEMU mapping parser. Dynamic host-port
-   allocation remains unsupported and fails during `up` preflight.
+   `port SERVICE PRIVATE_PORT[/PROTOCOL]` reports configured static host
+   bindings and queries QMP for dynamically allocated host ports while a VM is
+   running. Crash recovery and complete flag compatibility remain unfinished.
 3. **Partially implemented:** `up` selects required `depends_on` dependencies,
    orders them before dependents, and rejects cycles and missing required
    services. Short syntax and long syntax with `service_started` work;
@@ -433,9 +433,12 @@ in user-facing compatibility promises.
    aliases, DHCP, and inter-service connectivity.
 2. **Partially implemented:** translate short and long port mappings, equal-
    sized numeric ranges, TCP/UDP protocols, and numeric IPv4 host IPs to QEMU
-   user networking. IPv6 host bindings are rejected because QEMU's current
-   user-network host-forward parser does not support them. Remaining: dynamic
-   host ports, conflict detection, and broader syntax fixtures.
+   user networking, including dynamic host-port allocation and QMP lookup of
+   assigned endpoints. `up` preflights selected services (including selected
+   dependencies) for overlapping static host-port bindings before launching
+   any VM. IPv6 host bindings are rejected because QEMU's current user-network
+   host-forward parser does not support them. Remaining: host-wide collision
+   detection against unrelated processes and broader syntax fixtures.
 3. Select and document backends (QEMU user networking, bridge/tap, or another
    backend) with install and privilege requirements. Make backend choice
    explicit and inspectable.

@@ -3241,6 +3241,68 @@ typedef struct UpContext {
   gboolean start_only;
 } UpContext;
 
+typedef struct PublishedPortOwner {
+  const char *service;
+  PortBinding *binding;
+} PublishedPortOwner;
+
+typedef struct PortPreflight {
+  GPtrArray *published;
+} PortPreflight;
+
+static gboolean preflight_service_ports(const char *name, YNode *service,
+                                        void *data) {
+  PortPreflight *preflight = data;
+  GPtrArray *bindings = g_ptr_array_new_with_free_func(
+      (GDestroyNotify)port_binding_free);
+  gboolean valid = FALSE;
+  char *forwards = port_forwards(service, name, &valid, bindings);
+  g_free(forwards);
+  if (!valid) {
+    g_ptr_array_free(bindings, TRUE);
+    return FALSE;
+  }
+  for (guint i = 0; i < bindings->len; i++) {
+    PortBinding *binding = g_ptr_array_index(bindings, i);
+    if (binding->dynamic) {
+      continue;
+    }
+    for (guint j = 0; j < preflight->published->len; j++) {
+      PublishedPortOwner *owner = g_ptr_array_index(preflight->published, j);
+      PortBinding *other = owner->binding;
+      gboolean binding_wildcard = !*binding->host_ip ||
+                                  g_str_equal(binding->host_ip, "0.0.0.0");
+      gboolean other_wildcard = !*other->host_ip ||
+                                g_str_equal(other->host_ip, "0.0.0.0");
+      gboolean address_overlap = binding_wildcard || other_wildcard ||
+                                 g_str_equal(binding->host_ip, other->host_ip);
+      if (binding->host_port == other->host_port &&
+          g_str_equal(binding->protocol, other->protocol) && address_overlap) {
+        fail("services '%s' and '%s' both publish %s host port %u",
+             owner->service, name, binding->protocol, binding->host_port);
+        g_ptr_array_free(bindings, TRUE);
+        return FALSE;
+      }
+    }
+    PublishedPortOwner *owner = g_new0(PublishedPortOwner, 1);
+    owner->service = name;
+    owner->binding = g_new0(PortBinding, 1);
+    owner->binding->host_ip = g_strdup(binding->host_ip);
+    owner->binding->protocol = g_strdup(binding->protocol);
+    owner->binding->host_port = binding->host_port;
+    g_ptr_array_add(preflight->published, owner);
+  }
+  g_ptr_array_free(bindings, TRUE);
+  return TRUE;
+}
+
+static void published_port_owner_free(PublishedPortOwner *owner) {
+  if (owner) {
+    port_binding_free(owner->binding);
+    g_free(owner);
+  }
+}
+
 static const char *service_image_reference(YNode *service) {
   const char *image = node_string(map_get(service, "image"));
   const char *extension_image =
@@ -3360,7 +3422,15 @@ static gboolean run_up_services(YNode *services, Options *opts,
   };
   UpContext context = {project, root, directory, &pull_context,
                        project_environment, opts->dry_run, start_only};
-  gboolean ok = for_up_services(services, opts, up_one, &context);
+  PortPreflight preflight = {
+      g_ptr_array_new_with_free_func(
+          (GDestroyNotify)published_port_owner_free)};
+  gboolean ok = for_up_services(services, opts, preflight_service_ports,
+                                &preflight);
+  if (ok) {
+    ok = for_up_services(services, opts, up_one, &context);
+  }
+  g_ptr_array_free(preflight.published, TRUE);
   if (ok && !opts->detach && !opts->dry_run) {
     g_print("[%s] running in the background; use 'quocker logs -f' to follow "
             "output\n",

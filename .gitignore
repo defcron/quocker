@@ -29,4 +29,5 @@ GTAGS
 /scripts/quocker-fake-qemu-img
 /scripts/quocker-guest-init
 /scripts/docker-credential-quocker-test
+/scripts/docker-credential-quocker-test.p/
 /scripts/quocker*.p/

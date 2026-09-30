@@ -121,6 +121,10 @@ if not get_option('quocker').disabled()
          args: ['-f', files('../tests/quocker/ports-ipv6-hostip.yaml'),
                 'up', '--dry-run'],
          should_fail: true, suite: ['quocker'])
+    test('quocker-ports-conflict', quocker,
+         args: ['-f', files('../tests/quocker/ports-conflict.yaml'),
+                'up', '--dry-run'],
+         should_fail: true, suite: ['quocker'])
     test('quocker-ports-dynamic-dry-run', quocker,
          args: ['-f', files('../tests/quocker/ports-dynamic.yaml'), 'up',
                 '--dry-run'], suite: ['quocker'])

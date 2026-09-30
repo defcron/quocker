@@ -1,0 +1,11 @@
+services:
+  web:
+    image: ./web.qcow2
+    ports:
+      - "8080:80"
+  admin:
+    image: ./admin.qcow2
+    ports:
+      - target: 8081
+        published: "8080"
+        host_ip: 127.0.0.1
