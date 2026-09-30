@@ -126,7 +126,8 @@ has a meaningful VM equivalent.
   mismatched/recycled PID is left untouched. New VM state is written to a
   private temporary file, fsynced, atomically renamed, and directory-synced
   before `up` reports success; the next lifecycle operation removes abandoned
-  state-write temporary files under the project lock. Signals bind to pidfds where the
+  state-write temporary files under the project lock. State reads are size-
+  bounded and reject symlinks and non-user-owned files. Signals bind to pidfds where the
   host kernel supports them; older kernels fall back to immediate identity
   revalidation. Older state without start-time metadata remains readable but
   has only the VM-name process check. QEMU now exposes a private

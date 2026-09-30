@@ -162,6 +162,22 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_false(g_file_test(pidfile, G_FILE_TEST_EXISTS));
   g_spawn_close_pid(child);
 
+  char *saved_state_path = g_build_filename(state_directory, "app.state.saved",
+                                             NULL);
+  char *external_state = g_build_filename(directory, "external.state", NULL);
+  g_assert_cmpint(g_rename(state_path, saved_state_path), ==, 0);
+  g_assert_true(g_file_set_contents(external_state, "123\n", -1, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(symlink(external_state, state_path), ==, 0);
+  output = NULL;
+  g_assert_false(run_cli(cli, directory, compose, "up", &output));
+  g_free(output);
+  g_assert_cmpint(g_unlink(state_path), ==, 0);
+  g_assert_cmpint(g_rename(saved_state_path, state_path), ==, 0);
+  g_unlink(external_state);
+  g_free(saved_state_path);
+  g_free(external_state);
+
   output = NULL;
   g_assert_true(run_cli(cli, directory, compose, "start", &output));
   g_assert_nonnull(strstr(output, "app: started"));

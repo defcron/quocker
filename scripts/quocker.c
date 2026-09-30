@@ -2366,16 +2366,52 @@ static gboolean state_recover_temporary(const char *directory) {
   return ok;
 }
 
-static char *state_disk_basename(const char *directory, const char *service) {
+static gboolean service_overlay_name(const char *filename,
+                                     const char *service);
+
+static char *state_contents_read(const char *directory, const char *service) {
   char *path = state_path(directory, service);
-  gchar *contents = NULL;
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  g_free(path);
+  if (fd < 0) {
+    return NULL;
+  }
+  struct stat st;
+  if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) ||
+      st.st_uid != geteuid() || st.st_size <= 0 || st.st_size > 4096) {
+    close(fd);
+    return NULL;
+  }
+  char *contents = g_malloc((gsize)st.st_size + 1);
+  gsize offset = 0;
+  while (offset < (gsize)st.st_size) {
+    ssize_t count = read(fd, contents + offset, (gsize)st.st_size - offset);
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count <= 0) {
+      break;
+    }
+    offset += (gsize)count;
+  }
+  close(fd);
+  if (offset != (gsize)st.st_size || memchr(contents, '\0', offset)) {
+    g_free(contents);
+    return NULL;
+  }
+  contents[offset] = '\0';
+  return contents;
+}
+
+static char *state_disk_basename(const char *directory, const char *service) {
+  gchar *contents = state_contents_read(directory, service);
   char *disk = NULL;
-  if (g_file_get_contents(path, &contents, NULL, NULL)) {
+  if (contents) {
     gchar **lines = g_strsplit(contents, "\n", 0);
     for (guint i = 1; lines[i]; i++) {
       if (*lines[i] && !strchr(lines[i], '/') &&
           !g_str_equal(lines[i], ".") && !g_str_equal(lines[i], "..") &&
-          g_str_has_suffix(lines[i], ".qcow2")) {
+          service_overlay_name(lines[i], service)) {
         disk = g_strdup(lines[i]);
         break;
       }
@@ -2383,7 +2419,6 @@ static char *state_disk_basename(const char *directory, const char *service) {
     g_strfreev(lines);
     g_free(contents);
   }
-  g_free(path);
   return disk;
 }
 
@@ -2415,10 +2450,9 @@ static guint64 process_start_time(pid_t pid) {
 
 static guint64 state_process_start_time(const char *directory,
                                         const char *service) {
-  char *path = state_path(directory, service);
-  gchar *contents = NULL;
+  gchar *contents = state_contents_read(directory, service);
   guint64 start_time = 0;
-  if (g_file_get_contents(path, &contents, NULL, NULL)) {
+  if (contents) {
     gchar **lines = g_strsplit(contents, "\n", 0);
     gboolean after_disk = FALSE;
     for (guint i = 0; lines[i]; i++) {
@@ -2430,13 +2464,11 @@ static guint64 state_process_start_time(const char *directory,
         }
         break;
       }
-      after_disk = *lines[i] && !strchr(lines[i], '/') &&
-                   g_str_has_suffix(lines[i], ".qcow2");
+      after_disk = service_overlay_name(lines[i], service);
     }
     g_strfreev(lines);
     g_free(contents);
   }
-  g_free(path);
   return start_time;
 }
 
@@ -2507,10 +2539,9 @@ static char *find_service_overlay(const char *directory, const char *service) {
 }
 
 static pid_t read_pid(const char *directory, const char *service) {
-  char *path = state_path(directory, service);
-  gchar *contents = NULL;
+  gchar *contents = state_contents_read(directory, service);
   pid_t pid = 0;
-  if (g_file_get_contents(path, &contents, NULL, NULL)) {
+  if (contents) {
     char *start = contents;
     if (g_str_has_prefix(contents, "{")) {
       start = strstr(contents, "\"pid\"");
@@ -2520,11 +2551,26 @@ static pid_t read_pid(const char *directory, const char *service) {
       }
     }
     if (start) {
-      pid = (pid_t)g_ascii_strtoll(start, NULL, 10);
+      while (g_ascii_isspace(*start)) {
+        start++;
+      }
+      char *end = NULL;
+      gint64 parsed = g_ascii_strtoll(start, &end, 10);
+      gboolean valid_end = end != start;
+      while (valid_end && (*end == ' ' || *end == '\t')) {
+        end++;
+      }
+      if (g_str_has_prefix(contents, "{")) {
+        valid_end = valid_end && (*end == ',' || *end == '}');
+      } else {
+        valid_end = valid_end && (*end == '\n' || *end == '\0');
+      }
+      if (valid_end && parsed > 1 && parsed <= G_MAXINT) {
+        pid = (pid_t)parsed;
+      }
     }
     g_free(contents);
   }
-  g_free(path);
   return pid;
 }
 
@@ -5107,6 +5153,30 @@ static gboolean up_one(const char *name, YNode *service, void *data) {
     }
     g_free(forwards);
     return ports_valid;
+  }
+  char *saved_state_path = state_path(ctx->directory, name);
+  struct stat saved_state_stat;
+  if (g_lstat(saved_state_path, &saved_state_stat) == 0) {
+    gchar *saved_state = state_contents_read(ctx->directory, name);
+    char *saved_disk = state_disk_basename(ctx->directory, name);
+    gboolean saved_state_valid = saved_state && saved_disk &&
+                                 read_pid(ctx->directory, name) > 1;
+    g_free(saved_state);
+    g_free(saved_disk);
+    g_free(saved_state_path);
+    if (!saved_state_valid) {
+      fail("service '%s': saved VM state is malformed or unsafe; inspect it "
+           "before starting another VM",
+           name);
+      return FALSE;
+    }
+  } else if (errno != ENOENT) {
+    fail("service '%s': could not inspect its saved VM state: %s", name,
+         g_strerror(errno));
+    g_free(saved_state_path);
+    return FALSE;
+  } else {
+    g_free(saved_state_path);
   }
   pid_t pid = read_pid(ctx->directory, name);
   if (process_running(pid, ctx->project, name,
