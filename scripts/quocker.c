@@ -105,6 +105,7 @@ typedef struct Options {
   gboolean config_no_path_resolution;
   gboolean config_no_normalize;
   gboolean config_no_consistency;
+  gboolean config_resolve_image_digests;
   int signal_number;
   gboolean remove_volumes;
   gboolean remove_orphans;
@@ -6322,6 +6323,78 @@ static gboolean config_validate_service_dependencies(YNode *services) {
   return ok;
 }
 
+static char *config_canonical_image_reference(const char *image,
+                                               const char *digest) {
+  const char *slash = strchr(image, '/');
+  const char *dot = strchr(image, '.');
+  const char *colon = strchr(image, ':');
+  gboolean explicit_registry =
+      slash && (!strncmp(image, "localhost/", 10) ||
+                (dot && dot < slash) || (colon && colon < slash));
+  const char *name = image;
+  const char *registry = "docker.io";
+  char *registry_owned = NULL;
+  if (explicit_registry) {
+    registry_owned = g_strndup(image, slash - image);
+    registry = registry_owned;
+    name = slash + 1;
+    if (g_str_equal(registry, "index.docker.io") ||
+        g_str_equal(registry, "registry-1.docker.io")) {
+      registry = "docker.io";
+    }
+  }
+  const char *tag_colon = strrchr(name, ':');
+  const char *last_slash = strrchr(name, '/');
+  if (tag_colon && last_slash && tag_colon < last_slash) {
+    tag_colon = NULL;
+  }
+  char *repository = tag_colon ? g_strndup(name, tag_colon - name)
+                               : g_strdup(name);
+  const char *tag = tag_colon ? tag_colon + 1 : "latest";
+  if (g_str_equal(registry, "docker.io") && !strchr(repository, '/')) {
+    char *official = g_strdup_printf("library/%s", repository);
+    g_free(repository);
+    repository = official;
+  }
+  char *canonical = g_strdup_printf("%s/%s:%s@%s", registry, repository,
+                                    tag, digest);
+  g_free(registry_owned);
+  g_free(repository);
+  return canonical;
+}
+
+static gboolean config_resolve_image_digests(YNode *services) {
+  const char *mirror = g_getenv("QUOCKER_REGISTRY_MIRROR");
+  if (!services || services->kind != NODE_MAPPING) {
+    return TRUE;
+  }
+  for (guint i = 0; i < services->items->len; i++) {
+    YPair *pair = g_ptr_array_index(services->items, i);
+    const char *name = node_string(pair->key);
+    YNode *service = pair->value;
+    YNode *image_node = map_get(service, "image");
+    const char *image = node_string(image_node);
+    if (!image || !*image || strchr(image, '@') ||
+        g_file_test(image, G_FILE_TEST_IS_REGULAR) ||
+        g_path_is_absolute(image) || g_str_has_prefix(image, "./") ||
+        g_str_has_prefix(image, "../")) {
+      continue;
+    }
+    char *digest = NULL;
+    if (!quocker_oci_resolve_digest(image,
+                                    node_string(map_get(service, "platform")),
+                                    mirror, &digest)) {
+      fail("service '%s': could not resolve image digest", name);
+      return FALSE;
+    }
+    char *resolved = config_canonical_image_reference(image, digest);
+    g_free(image_node->scalar);
+    image_node->scalar = resolved;
+    g_free(digest);
+  }
+  return TRUE;
+}
+
 static gboolean for_up_services(YNode *services, Options *opts,
                                 gboolean (*callback)(const char *, YNode *,
                                                      void *),
@@ -7933,6 +8006,7 @@ static void usage(FILE *file) {
           "  config --no-path-resolution Keep config file paths relative\n"
           "  config --no-normalize     Skip implicit default network output\n"
           "  config --no-consistency  Skip dependency consistency checks\n"
+          "  config --resolve-image-digests Pin images to registry digests\n"
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
@@ -8176,6 +8250,9 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     } else if (opts->command && g_str_equal(opts->command, "config") &&
                g_str_equal(arg, "--no-consistency")) {
       opts->config_no_consistency = TRUE;
+    } else if (opts->command && g_str_equal(opts->command, "config") &&
+               g_str_equal(arg, "--resolve-image-digests")) {
+      opts->config_resolve_image_digests = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "ps") &&
                (g_str_equal(arg, "-q") || g_str_equal(arg, "--quiet"))) {
       opts->quiet = TRUE;
@@ -9071,6 +9148,11 @@ int main(int argc, char **argv) {
   }
   if (config_variables) {
     return config_write_variables() ? 0 : 1;
+  }
+  if (g_str_equal(opts.command, "config") &&
+      opts.config_resolve_image_digests &&
+      !config_resolve_image_digests(map_get(config, "services"))) {
+    return 1;
   }
   if (g_str_equal(opts.command, "config") &&
       !opts.config_no_consistency &&

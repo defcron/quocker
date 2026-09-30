@@ -185,10 +185,10 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
        ``--environment``, ``--variables``, ``--services``, ``--profiles``,
        ``--images``,
        ``--volumes``, ``--networks``, ``--models``, ``--no-env-resolution``,
-       ``--no-interpolate``, ``--no-normalize``, ``--no-consistency``, partial
-       ``--no-path-resolution``, and
+       ``--no-interpolate``, ``--no-normalize``, ``--no-consistency``,
+       ``--resolve-image-digests``, partial ``--no-path-resolution``, and
        Quocker-specific ``--capabilities``.
-     - ``--hash``, ``--lock-image-digests``, and image-digest resolution.
+     - ``--hash`` and ``--lock-image-digests``.
        See the
        `Compose config reference <https://docs.docker.com/reference/cli/docker/compose/config/>`_.
    * - ``start``, ``stop``, ``restart``, ``pause``, ``unpause``
@@ -329,6 +329,12 @@ normalized yet. Build context paths are resolved relative to their declaring
 Compose project; Dockerfile paths retain Compose's context-relative spelling.
 List-form ``additional_contexts`` are normalized to a mapping as in Compose's
 rendered model.
+``config --resolve-image-digests`` resolves each registry-backed service image
+and renders a canonical reference pinned to the registry manifest digest.
+Multi-platform images retain their index digest, and an explicitly configured
+service platform must be present in that index. This operation reads registry
+manifests only; it does not fetch layers or populate the local image cache.
+Local disk image paths and references already containing a digest are retained.
 These output selection modes cannot be combined with ``--format``; without an
 output selection option, ``config`` renders YAML by default or JSON with
 ``--format json``.

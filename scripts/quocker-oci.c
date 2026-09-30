@@ -1630,6 +1630,112 @@ static gboolean platform_parse(const char *value, char **os_out,
   return valid;
 }
 
+/*
+ * Resolve an image's manifest digest without downloading config or layer
+ * blobs. For a multi-platform image, validate platform availability and
+ * retain the index digest as Compose does. Config rendering must not populate
+ * the guest image cache as a side effect.
+ */
+gboolean quocker_oci_resolve_digest(const char *reference,
+                                    const char *platform,
+                                    const char *mirror_url,
+                                    char **digest_out) {
+  if (digest_out) {
+    *digest_out = NULL;
+  }
+  static gsize curl_initialized;
+  if (g_once_init_enter(&curl_initialized)) {
+    CURLcode code = curl_global_init(CURL_GLOBAL_DEFAULT);
+    g_once_init_leave(&curl_initialized, code == CURLE_OK ? 1 : 2);
+  }
+  OciReference ref;
+  if (!reference_parse(reference, &ref)) {
+    return FALSE;
+  }
+  char *os = NULL;
+  char *architecture = NULL;
+  gboolean ok = platform_parse(platform, &os, &architecture);
+  GError *mirror_error = NULL;
+  if (ok) {
+    ref.mirror = quocker_registry_mirror_resolve(ref.registry, mirror_url,
+                                                  &mirror_error);
+    if (mirror_error) {
+      oci_error("invalid registry mirror configuration: %s",
+                mirror_error->message);
+      g_clear_error(&mirror_error);
+      ok = FALSE;
+    }
+  }
+  GBytes *bytes = ok ? fetch_manifest(&ref, mirror_url, ref.selector, NULL,
+                                      NULL) : NULL;
+  ok = bytes != NULL;
+  JsonParser *parser = NULL;
+  JsonObject *manifest = ok ? json_object_from_bytes(bytes, &parser) : NULL;
+  ok = manifest != NULL;
+  /* Compose pins a multi-platform image to its index digest. Keep the whole
+   * index immutable while still requiring that it declares the requested
+   * platform. */
+  char *digest = ok ? bytes_digest(bytes) : NULL;
+  if (ok && json_object_has_member(manifest, "manifests")) {
+    JsonNode *node = json_object_get_member(manifest, "manifests");
+    if (!JSON_NODE_HOLDS_ARRAY(node)) {
+      oci_error("image index 'manifests' member must be an array");
+      ok = FALSE;
+    } else {
+      JsonArray *manifests = json_node_get_array(node);
+      OciDescriptor selected = {0};
+      for (guint i = 0; i < json_array_get_length(manifests); i++) {
+        JsonObject *candidate = json_array_get_object_element(manifests, i);
+        if (platform_match(candidate, os, architecture)) {
+          selected = descriptor_read(candidate);
+          if (selected.digest) {
+            break;
+          }
+        }
+      }
+      if (!selected.digest) {
+        oci_error("image %s has no manifest for %s/%s", reference, os,
+                  architecture);
+        ok = FALSE;
+      } else {
+        char *selector = g_strdup(selected.digest);
+        g_object_unref(parser);
+        parser = NULL;
+        g_bytes_unref(bytes);
+        bytes = fetch_manifest(&ref, mirror_url, selector, selected.digest,
+                               NULL);
+        g_free(selector);
+        if (!bytes) {
+          ok = FALSE;
+        } else {
+          manifest = json_object_from_bytes(bytes, &parser);
+          ok = manifest && json_object_has_member(manifest, "config") &&
+               json_object_has_member(manifest, "layers");
+          if (!ok) {
+            oci_error("selected registry response is not an image manifest");
+          }
+        }
+      }
+      descriptor_clear(&selected);
+    }
+  }
+  if (parser) {
+    g_object_unref(parser);
+  }
+  if (bytes) {
+    g_bytes_unref(bytes);
+  }
+  if (ok && digest_out) {
+    *digest_out = digest;
+    digest = NULL;
+  }
+  g_free(digest);
+  g_free(os);
+  g_free(architecture);
+  reference_clear(&ref);
+  return ok;
+}
+
 void quocker_oci_image_free(QuockerOciImage *image) {
   if (!image) {
     return;

@@ -24,6 +24,10 @@ typedef struct QuockerOciImage {
 gboolean quocker_oci_pull(const char *reference, const char *platform,
                           const char *cache_directory, const char *mirror_url,
                           QuockerOciImage **image_out);
+gboolean quocker_oci_resolve_digest(const char *reference,
+                                    const char *platform,
+                                    const char *mirror_url,
+                                    char **digest_out);
 void quocker_oci_image_free(QuockerOciImage *image);
 gboolean quocker_oci_cache_prune(const char *cache_directory);
 gboolean quocker_oci_cache_reference(const char *cache_directory,
