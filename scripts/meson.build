@@ -37,6 +37,7 @@ if not get_option('quocker').disabled()
                                     'quocker-image.c', 'quocker-disk.c',
                                     'quocker-volume.c',
                                     'quocker-initrd.c', 'quocker-env.c',
+                                    'quocker-guest-status.c',
                                     'quocker-registry-auth.c',
                                     'quocker-registry-config.c',
                                     'quocker-registry-http.c'],
@@ -55,6 +56,12 @@ if not get_option('quocker').disabled()
       rename: 'quocker')
 
     test('quocker-help', quocker, args: ['--help'], suite: ['quocker'])
+    quocker_guest_status_test = executable(
+      'quocker-guest-status-test',
+      [files('../tests/quocker/guest-status-test.c'),
+       'quocker-guest-status.c'], dependencies: [glib])
+    test('quocker-guest-status', quocker_guest_status_test,
+         suite: ['quocker'])
     quocker_version_test = executable(
       'quocker-version-test', files('../tests/quocker/version-test.c'),
       dependencies: [glib])

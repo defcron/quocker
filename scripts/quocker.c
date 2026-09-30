@@ -12,6 +12,7 @@
 #include "quocker-disk.h"
 #include "quocker-compose-schema.h"
 #include "quocker-env.h"
+#include "quocker-guest-status.h"
 #include "quocker-initrd.h"
 #include "quocker-volume.h"
 #include "quocker-kernel.h"
@@ -5357,36 +5358,14 @@ static gboolean guest_exit_status_read(const char *directory, const char *name,
   }
   close(fd);
   contents[length] = '\0';
-  const char *last_marker = NULL;
-  gsize offset = 0;
-  while (offset < length) {
-    const char *marker =
-        g_strstr_len(contents + offset, length - offset, "QUOCKER_EXIT ");
-    if (!marker) {
-      break;
-    }
-    last_marker = marker;
-    offset = (gsize)(marker - contents) + 1;
+  GError *error = NULL;
+  gboolean ok = quocker_guest_status_parse_exit(contents, length, status_out,
+                                                &error);
+  if (!ok) {
+    fail("service '%s': %s", name,
+         error ? error->message : "invalid guest completion status");
   }
-  gboolean ok = FALSE;
-  if (!last_marker) {
-    fail("service '%s' stopped without a Quocker guest completion status",
-         name);
-  } else if (g_str_has_prefix(last_marker, "QUOCKER_EXIT status=")) {
-    const char *value = last_marker + strlen("QUOCKER_EXIT status=");
-    char *end = NULL;
-    gint64 status = g_ascii_strtoll(value, &end, 10);
-    if (end != value && status >= 0 && status <= 255 &&
-        (*end == '\n' || *end == '\r' || *end == '\0')) {
-      *status_out = (int)status;
-      ok = TRUE;
-    } else {
-      fail("service '%s' wrote an invalid Quocker guest completion status",
-           name);
-    }
-  } else {
-    fail("service '%s' did not exit successfully inside the guest", name);
-  }
+  g_clear_error(&error);
   g_free(contents);
   g_free(path);
   return ok;
@@ -5429,22 +5408,7 @@ static gboolean guest_log_has_ready_marker(const char *directory,
   }
   close(fd);
   contents[length] = '\0';
-  gboolean found = FALSE;
-  const char *line = contents;
-  while (line < contents + length) {
-    const char *end = memchr(line, '\n', (contents + length) - line);
-    gsize line_length = end ? (gsize)(end - line) :
-                              (gsize)((contents + length) - line);
-    if (line_length >= strlen("QUOCKER_READY ") &&
-        memcmp(line, "QUOCKER_READY ", strlen("QUOCKER_READY ")) == 0) {
-      found = TRUE;
-      break;
-    }
-    if (!end) {
-      break;
-    }
-    line = end + 1;
-  }
+  gboolean found = quocker_guest_status_has_ready(contents, length);
   g_free(contents);
   return found;
 }

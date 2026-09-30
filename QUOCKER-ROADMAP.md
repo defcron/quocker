@@ -456,7 +456,8 @@ in user-facing compatibility promises.
    reports readiness only after successful exec plus exit status on serial. The
    host supports `up --wait` and `--wait-timeout`, using that readiness marker
    for OCI guests; local bootable disks can only be checked for a live QEMU
-   process. A C initrd builder appends this init and a
+   process. Serial readiness and exit-status parsing have focused C unit tests.
+   A C initrd builder appends this init and a
    bounded runtime config to the digest-verified catalog initrd. Remaining
    work: provision trust keys, maintain kernel/initrd assets and catalog
    updates, implement guest network configuration, and persist structured
