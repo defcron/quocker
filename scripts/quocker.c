@@ -5771,10 +5771,19 @@ static gboolean wait_for_vm_stop(const char *project, const char *directory,
 }
 
 static gboolean guest_exit_status_read(const char *directory, const char *name,
-                                       int *status_out) {
+                                       int *status_out,
+                                       gboolean allow_missing_log,
+                                       gboolean *found_status) {
+  if (found_status) {
+    *found_status = FALSE;
+  }
   char *path = g_strdup_printf("%s/%s.log", directory, name);
   int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
   if (fd < 0) {
+    if (allow_missing_log && errno == ENOENT) {
+      g_free(path);
+      return TRUE;
+    }
     fail("service '%s': cannot read guest completion log: %s", name,
          g_strerror(errno));
     g_free(path);
@@ -5820,9 +5829,17 @@ static gboolean guest_exit_status_read(const char *directory, const char *name,
   GError *error = NULL;
   gboolean ok = quocker_guest_status_parse_exit(contents, length, status_out,
                                                 &error);
+  gboolean has_status = !error || error->code != 1;
   if (!ok) {
-    fail("service '%s': %s", name,
-         error ? error->message : "invalid guest completion status");
+    if (allow_missing_log && !has_status) {
+      ok = TRUE;
+    } else {
+      fail("service '%s': %s", name,
+           error ? error->message : "invalid guest completion status");
+    }
+  }
+  if (ok && found_status && has_status) {
+    *found_status = TRUE;
   }
   g_clear_error(&error);
   g_free(contents);
@@ -5896,7 +5913,8 @@ static gboolean wait_completed_dependency(const char *service_name,
     return FALSE;
   }
   int guest_status = -1;
-  if (!guest_exit_status_read(ctx->directory, service_name, &guest_status)) {
+  if (!guest_exit_status_read(ctx->directory, service_name, &guest_status,
+                              FALSE, NULL)) {
     return FALSE;
   }
   if (guest_status != 0) {
@@ -5974,7 +5992,8 @@ static gboolean wait_ready_one(const char *name, YNode *service, void *data) {
     }
     if (!running) {
       int guest_status = -1;
-      if (guest_exit_status_read(ctx->directory, name, &guest_status)) {
+      if (guest_exit_status_read(ctx->directory, name, &guest_status, FALSE,
+                                 NULL)) {
         if (guest_status == 0) {
           ready = TRUE;
         } else {
@@ -6663,7 +6682,19 @@ typedef struct WaitContext {
 static gboolean wait_one(const char *name, YNode *service, void *data) {
   (void)service;
   WaitContext *ctx = data;
-  return wait_for_vm_stop(ctx->project, ctx->directory, name);
+  if (!wait_for_vm_stop(ctx->project, ctx->directory, name)) {
+    return FALSE;
+  }
+  int guest_status = 0;
+  gboolean has_guest_status = FALSE;
+  if (!guest_exit_status_read(ctx->directory, name, &guest_status, TRUE,
+                              &has_guest_status)) {
+    return FALSE;
+  }
+  if (has_guest_status) {
+    g_print("%s: exit code %d\n", name, guest_status);
+  }
+  return TRUE;
 }
 
 typedef struct PortContext {

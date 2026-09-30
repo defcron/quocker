@@ -322,6 +322,15 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_true(WIFEXITED(waiter_status));
   g_assert_cmpint(WEXITSTATUS(waiter_status), ==, 0);
   g_spawn_close_pid(waiter);
+  char *guest_log = g_build_filename(state_directory, "app.log", NULL);
+  g_assert_true(g_file_set_contents(guest_log,
+                                    "QUOCKER_EXIT status=23\n", -1, &error));
+  g_assert_no_error(error);
+  output = NULL;
+  g_assert_true(run_cli(cli, directory, compose, "wait", &output));
+  g_assert_cmpstr(output, ==, "app: exit code 23\n");
+  g_free(output);
+  g_free(guest_log);
   output = NULL;
   g_assert_true(run_cli(cli, directory, compose, "start", &output));
   g_free(output);
@@ -515,6 +524,9 @@ static void test_stop_preserves_vm_state(void) {
 
   g_assert_false(g_file_test(overlay_sidecar, G_FILE_TEST_EXISTS));
   g_assert_false(g_file_test(overlay_disk, G_FILE_TEST_EXISTS));
+  char *app_log = g_build_filename(state_directory, "app.log", NULL);
+  g_assert_cmpint(g_unlink(app_log), ==, 0);
+  g_free(app_log);
   g_assert_cmpint(g_unlink(base_disk), ==, 0);
   g_assert_cmpint(g_unlink(fake_argv_path), ==, 0);
   g_assert_cmpint(g_unlink(compose), ==, 0);
