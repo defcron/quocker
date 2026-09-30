@@ -6251,6 +6251,7 @@ typedef struct RmContext {
   const char *directory;
   YNode *services;
   gboolean stop_running;
+  gboolean remove_anonymous_volumes;
   guint shutdown_timeout_seconds;
 } RmContext;
 
@@ -6496,6 +6497,39 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
   return TRUE;
 }
 
+static gboolean remove_anonymous_volumes_for_service(const char *directory,
+                                                      const char *project,
+                                                      const char *service) {
+  char *prefix = g_strdup_printf("%s:%s:", project, service);
+  GPtrArray *volumes = NULL;
+  GError *error = NULL;
+  if (!quocker_volume_list(directory, &volumes, &error)) {
+    fail("service '%s': could not inspect anonymous VM volumes: %s", service,
+         error ? error->message : "unknown volume error");
+    g_clear_error(&error);
+    g_free(prefix);
+    return FALSE;
+  }
+  gboolean ok = TRUE;
+  for (guint i = 0; ok && i < volumes->len; i++) {
+    QuockerVolumeInfo *volume = g_ptr_array_index(volumes, i);
+    if (g_str_has_prefix(volume->logical_name, prefix)) {
+      ok = quocker_volume_remove(directory, volume->logical_name, &error);
+      if (!ok) {
+        fail("service '%s': could not remove anonymous VM volume '%s': %s",
+             service, volume->logical_name,
+             error ? error->message : "unknown volume error");
+        g_clear_error(&error);
+      } else {
+        g_print("Removed anonymous volume %s\n", volume->logical_name);
+      }
+    }
+  }
+  g_ptr_array_free(volumes, TRUE);
+  g_free(prefix);
+  return ok;
+}
+
 static gboolean rm_one(const char *name, YNode *service, void *data) {
   RmContext *ctx = data;
   pid_t pid = read_pid(ctx->directory, name);
@@ -6513,7 +6547,12 @@ static gboolean rm_one(const char *name, YNode *service, void *data) {
                               FALSE,
                               FALSE,
                               ctx->shutdown_timeout_seconds};
-  return down_one(name, service, &down_context);
+  if (!down_one(name, service, &down_context)) {
+    return FALSE;
+  }
+  return !ctx->remove_anonymous_volumes ||
+         remove_anonymous_volumes_for_service(ctx->directory, ctx->project,
+                                              name);
 }
 
 static gboolean remove_orphan_services(const char *project,
@@ -7532,11 +7571,6 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     fail("rm --timeout requires --stop");
     return FALSE;
   }
-  if (g_str_equal(opts->command, "rm") && opts->remove_volumes) {
-    fail("rm --volumes is unsupported until anonymous and named VM volumes "
-         "can be removed separately");
-    return FALSE;
-  }
   if (opts->config_list_mode && opts->config_format) {
     fail("config output selection cannot be combined with --format");
     return FALSE;
@@ -8161,6 +8195,7 @@ int main(int argc, char **argv) {
     }
   } else if (g_str_equal(opts.command, "rm")) {
     RmContext context = {project_lower, directory, services, opts.rm_stop,
+                         opts.remove_volumes,
                          opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, rm_one, &context);
   } else if (g_str_equal(opts.command, "ps")) {

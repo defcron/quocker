@@ -87,7 +87,8 @@ treated as successful.
    * - ``rm``
      - VM-adapted, partial
      - Removes stopped VM state and service overlays. Running VMs require
-       ``--stop``/``-s``. Named project volumes are preserved.
+       ``--stop``/``-s``. ``--volumes``/``-v`` removes anonymous service
+       volumes and preserves named project volumes.
    * - ``version``
      - Implemented
      - Reports the Quocker interface and its QEMU base version.
@@ -199,9 +200,10 @@ claims. Docker-specific flags without a VM equivalent remain unsupported.
    * - ``rm``
      - Service names, ``-s``/``--stop``, and ``-t``/``--timeout SECONDS``
        (only with ``--stop``). ``-f``/``--force`` is accepted as a compatibility
-       no-op; running VMs are refused unless ``--stop`` is supplied.
-     - ``-v``/``--volumes`` is rejected because Quocker must distinguish
-       anonymous VM disks from named project volumes before deleting either.
+       no-op; ``-v``/``--volumes`` removes anonymous service volumes only.
+       Running VMs are refused unless ``--stop`` is supplied.
+     - Container-specific anonymous-volume behavior beyond Quocker's
+       service-scoped VM volume names.
    * - ``pull``
      - Service names; downloads OCI layers and prepares VM guest disks.
      - ``--ignore-buildable``, ``--ignore-pull-failures``, ``--include-deps``,

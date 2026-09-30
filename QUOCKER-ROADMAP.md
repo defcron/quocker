@@ -407,8 +407,9 @@ in user-facing compatibility promises.
    an orphan deletes its VM state but preserves its disk unless ``--volumes``
    is requested. `rm` removes stopped VM state and its service overlay, refuses
    running VMs unless `--stop` is passed, supports a stop timeout, and
-   preserves named project volumes; `rm --volumes` is rejected until anonymous
-   and named VM disks can be distinguished safely.
+   preserves named project volumes; `rm --volumes` removes only the selected
+   service's generated anonymous volume disks, including volumes declared by
+   the OCI image.
    The option inventory for less common commands still needs exact
    option-by-option coverage.
 2. Complete core commands and their normal flags: `up`, `down`, `ps`, `logs`,

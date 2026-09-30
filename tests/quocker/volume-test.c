@@ -302,6 +302,30 @@ int main(void) {
     g_assert_cmpint(g_unlink(pid_path), ==, 0);
     g_free(pid_text);
     g_free(pid_path);
+    char *anonymous_disk = NULL;
+    g_assert_true(quocker_volume_disk_prepare(
+        quocker_state, "project:app:/cache", 64 * 1024 * 1024,
+        &anonymous_disk, &error));
+    g_assert_no_error(error);
+    char *rm_arguments[] = {
+        (char *)cli, (char *)"--project-directory", project,
+        (char *)"--project-name", (char *)"project", (char *)"-f",
+        compose, (char *)"rm", (char *)"--volumes", (char *)"app", NULL};
+    stdout_text = NULL;
+    stderr_text = NULL;
+    g_assert_true(g_spawn_sync(NULL, rm_arguments, NULL, G_SPAWN_DEFAULT, NULL,
+                               NULL, &stdout_text, &stderr_text, &status,
+                               &error));
+    g_assert_no_error(error);
+    g_assert_true(g_spawn_check_wait_status(status, &error));
+    g_assert_no_error(error);
+    g_assert_nonnull(strstr(stdout_text,
+                            "Removed anonymous volume project:app:/cache"));
+    g_assert_false(g_file_test(anonymous_disk, G_FILE_TEST_EXISTS));
+    g_assert_true(g_file_test(disk, G_FILE_TEST_IS_REGULAR));
+    g_free(stdout_text);
+    g_free(stderr_text);
+    g_free(anonymous_disk);
     stdout_text = run_volume_command(cli, project, compose, "rm",
                                      "project:data", FALSE, TRUE);
     g_assert_nonnull(strstr(stdout_text, "Removed volume project:data"));
