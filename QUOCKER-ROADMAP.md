@@ -88,7 +88,7 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 46 focused tests; its latest run reported 26
+  Meson suite currently has 47 focused tests; its latest run reported 27
   passes, 20 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
@@ -190,8 +190,8 @@ installed as an optional Meson target, with a user page at
 - parses YAML mappings, validates the merged configuration against the pinned
   Compose schema, interpolates a subset of environment syntax, merges multiple
   files with mapping, sequence, command, unique-resource, and reset/override
-  rules, retains schema-valid fields for `config`, and
-  recognizes `!reset` / `!override` tags;
+  rules, expands YAML aliases and merge-key anchors, retains schema-valid
+  fields for `config`, and recognizes `!reset` / `!override` tags;
 - provides `up`, `down`, `rm`, `ps`, `logs`, and `config`, with direct and
   `quocker compose` command forms;
 - resolves Docker Hub and generic HTTPS registry image references through
@@ -219,7 +219,7 @@ process/state recovery, cleanup, and packaging need more coverage and review.
 OCI service ``env_file`` now supports ordered path lists, interpolation,
 optional long-form files, raw format, and service-environment precedence in C;
 explicit unresolved environment entries remove image defaults. The current
-The Quocker suite contains 46 tests: 26 pass, 20 produce expected failures,
+The Quocker suite contains 47 tests: 27 pass, 20 produce expected failures,
 and none fail unexpectedly. It includes JSON config serialization, static and
 dynamic port queries, plus a fake-QEMU lifecycle integration
 test covering stop, start, down, pause, unpause, kill, state preservation, and
@@ -305,8 +305,11 @@ in user-facing compatibility promises.
    deduplicate identical entries. `!reset` and `!override` are recognized.
    Full Compose short/long normalization and compatibility fixtures for every
    resource and merge field remain.
-6. Implement reusable fragments and extensions, YAML anchors, `include`, and
-   service `extends` with the correct file and path scopes.
+6. **Partially implemented:** `x-` extension fields are retained, and YAML
+   aliases plus `<<` merge keys with mapping/sequence sources work within one
+   file, with explicit fields overriding anchor defaults. Compose reusable
+   fragments, cross-file anchor scope, `include`, and service `extends` with
+   file/path rules remain unimplemented.
 7. **Schema validation implemented; diagnostics and policy partial.** The
    pinned schema validates top-level resources and service attributes,
    including nested fields and `x-` extensions. Errors include an instance

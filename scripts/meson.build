@@ -83,6 +83,14 @@ if not get_option('quocker').disabled()
                 files('../tests/quocker/merge-override.yaml')],
          env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
          suite: ['quocker'])
+    quocker_yaml_anchors_test = executable(
+      'quocker-yaml-anchors-test',
+      files('../tests/quocker/yaml-anchors-test.c'),
+      dependencies: [glib, quocker_json])
+    test('quocker-yaml-anchors', quocker_yaml_anchors_test,
+         args: [files('../tests/quocker/yaml-anchors.yaml')],
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     test('quocker-config-env-file-list', quocker,
          args: ['config', '--quiet'],
          env: ['COMPOSE_FILE=../tests/quocker/base.yaml|../tests/quocker/override.yaml',

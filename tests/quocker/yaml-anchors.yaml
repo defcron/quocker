@@ -1,0 +1,11 @@
+x-common: &common
+  image: ./app.qcow2
+  command: [echo, common]
+  environment:
+    SHARED: inherited
+x-extra: &extra
+  working_dir: /work
+services:
+  app:
+    <<: [*common, *extra]
+    command: [echo, explicit]

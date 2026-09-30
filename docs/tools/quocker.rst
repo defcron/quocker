@@ -332,6 +332,9 @@ another. Other sequences append, with duplicate entries removed for the
 supported capability, device-cgroup-rule, expose, external-link, security,
 placement-constraint, placement-preference, and generic-resource lists.
 ``!reset`` clears an overridden value and ``!override`` replaces it.
+YAML aliases and ``<<`` merge-key anchors are expanded within one file;
+explicit service fields override values inherited from an anchor. Compose
+``include`` and service ``extends`` are not implemented yet.
 
 Runtime state, logs, PID files, and disk overlays live under
 ``.quocker/PROJECT`` under the project directory.

@@ -271,6 +271,21 @@ static void map_set(YNode *map, const char *key, YNode *value) {
 
 static gboolean yaml_node_convert(yaml_document_t *document,
                                   yaml_node_t *source, YNode **result,
+                                  guint depth, char **problem);
+
+static void yaml_merge_mapping_defaults(YNode *defaults,
+                                        const YNode *mapping) {
+  for (guint i = 0; i < mapping->items->len; i++) {
+    YPair *pair = g_ptr_array_index(mapping->items, i);
+    const char *key = node_string(pair->key);
+    if (key && !map_get(defaults, key)) {
+      map_set(defaults, key, node_clone(pair->value));
+    }
+  }
+}
+
+static gboolean yaml_node_convert(yaml_document_t *document,
+                                  yaml_node_t *source, YNode **result,
                                   guint depth, char **problem) {
   if (depth > 256) {
     if (problem && !*problem) {
@@ -298,10 +313,57 @@ static gboolean yaml_node_convert(yaml_document_t *document,
     }
   } else if (source->type == YAML_MAPPING_NODE) {
     node = node_new(NODE_MAPPING, (const char *)source->tag);
+    YNode *defaults = node_new(NODE_MAPPING, TAG_MAP);
     for (yaml_node_pair_t *item = source->data.mapping.pairs.start;
          item < source->data.mapping.pairs.top; item++) {
       yaml_node_t *key = yaml_document_get_node(document, item->key);
       yaml_node_t *value = yaml_document_get_node(document, item->value);
+      if (key->type == YAML_SCALAR_NODE &&
+          key->data.scalar.style == YAML_PLAIN_SCALAR_STYLE &&
+          key->data.scalar.length == 2 &&
+          memcmp(key->data.scalar.value, "<<", 2) == 0) {
+        if (value->type == YAML_MAPPING_NODE) {
+          YNode *converted = NULL;
+          if (!yaml_node_convert(document, value, &converted, depth + 1,
+                                 problem)) {
+            node_free(defaults);
+            node_free(node);
+            return FALSE;
+          }
+          yaml_merge_mapping_defaults(defaults, converted);
+          node_free(converted);
+        } else if (value->type == YAML_SEQUENCE_NODE) {
+          for (yaml_node_item_t *source_mapping =
+                   value->data.sequence.items.start;
+               source_mapping < value->data.sequence.items.top;
+               source_mapping++) {
+            yaml_node_t *mapping =
+                yaml_document_get_node(document, *source_mapping);
+            YNode *converted = NULL;
+            if (mapping->type != YAML_MAPPING_NODE ||
+                !yaml_node_convert(document, mapping, &converted, depth + 1,
+                                   problem)) {
+              if (problem && !*problem) {
+                *problem = g_strdup("YAML merge sequences must contain mappings");
+              }
+              node_free(converted);
+              node_free(defaults);
+              node_free(node);
+              return FALSE;
+            }
+            yaml_merge_mapping_defaults(defaults, converted);
+            node_free(converted);
+          }
+        } else {
+          if (problem && !*problem) {
+            *problem = g_strdup("YAML merge keys must reference a mapping");
+          }
+          node_free(defaults);
+          node_free(node);
+          return FALSE;
+        }
+        continue;
+      }
       YPair *pair = g_new0(YPair, 1);
       if (!yaml_node_convert(document, key, &pair->key, depth + 1, problem) ||
           !yaml_node_convert(document, value, &pair->value, depth + 1,
@@ -309,6 +371,7 @@ static gboolean yaml_node_convert(yaml_document_t *document,
         node_free(pair->key);
         node_free(pair->value);
         g_free(pair);
+        node_free(defaults);
         node_free(node);
         return FALSE;
       }
@@ -319,6 +382,7 @@ static gboolean yaml_node_convert(yaml_document_t *document,
         node_free(pair->key);
         node_free(pair->value);
         g_free(pair);
+        node_free(defaults);
         node_free(node);
         return FALSE;
       }
@@ -331,14 +395,23 @@ static gboolean yaml_node_convert(yaml_document_t *document,
                                        node_string(pair->key));
           }
           node_free(pair->key);
-          node_free(pair->value);
-          g_free(pair);
-          node_free(node);
-          return FALSE;
+            node_free(pair->value);
+            g_free(pair);
+            node_free(defaults);
+            node_free(node);
+            return FALSE;
         }
       }
       g_ptr_array_add(node->items, pair);
     }
+    for (guint i = 0; i < defaults->items->len; i++) {
+      YPair *pair = g_ptr_array_index(defaults->items, i);
+      const char *key = node_string(pair->key);
+      if (key && !map_get(node, key)) {
+        map_set(node, key, node_clone(pair->value));
+      }
+    }
+    node_free(defaults);
   } else {
     return FALSE;
   }
