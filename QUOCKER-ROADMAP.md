@@ -166,8 +166,11 @@ with documented VM semantics**, **preserved but unsupported at runtime**, or
 permissive config/inspection mode can retain them and explain their status.
 
 The Compose Specification itself recognizes that implementations may support
-different subsets and recommends reporting unsupported attributes. Its
-current reference and schema are the compatibility baseline to pin and track:
+different subsets and recommends reporting unsupported attributes. Quocker
+vendors a schema snapshot from Compose Specification commit
+``914ec15d1fa498969c0df5c1d672306db3256089``. Its checksum, license, and update
+process are recorded in ``docs/compose-spec/README.rst``. This pins the
+baseline but does not yet validate files against the schema:
 [Compose file reference](https://docs.docker.com/reference/compose-file/),
 [Compose Specification](https://github.com/compose-spec/compose-spec/blob/main/spec.md),
 [Compose JSON schema](https://github.com/compose-spec/compose-spec/blob/main/schema/compose-spec.json).
@@ -220,8 +223,11 @@ PID reuse protection. This does not establish Compose-wide compatibility.
 
 ### Phase 0 — Set the product boundary and compatibility matrix
 
-1. Pin the Compose Specification and schema revision used for each Quocker
-   release; document how updates are reviewed.
+1. **Baseline pinned; validation pending.** The vendored Compose Specification
+   JSON Schema snapshot is from commit
+   ``914ec15d1fa498969c0df5c1d672306db3256089`` and uses JSON Schema 2020-12.
+   Review schema changes and update fixtures together. Implement runtime schema
+   validation before claiming Compose file compatibility.
 2. Define the supported host operating systems and architectures for the first
    release. Start with Linux x86_64 unless the project chooses a wider target.
 3. Quocker manages VMs and application/network configuration for those VMs;
