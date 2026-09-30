@@ -251,6 +251,49 @@ static void volume_lock_release(int lock_fd) {
   }
 }
 
+static gboolean volume_disk_lock_exclusive(const char *disk_path, int *fd_out,
+                                           GError **error) {
+  int fd = open(disk_path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0) {
+    volume_error(error, "could not safely open the volume disk for removal");
+    return FALSE;
+  }
+  struct stat st;
+  if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+    volume_error(error, "volume disk is not a regular file");
+    close(fd);
+    return FALSE;
+  }
+  /* Match the raw file driver's permission lock byte ranges. */
+  struct flock lock = {.l_type = F_WRLCK, .l_whence = SEEK_SET, .l_len = 1};
+#ifdef F_OFD_SETLK
+  const int lock_command = F_OFD_SETLK;
+#else
+  const int lock_command = F_SETLK;
+#endif
+  for (int i = 0; i < 4; i++) {
+    const int starts[] = {100 + i, 200 + i};
+    for (guint j = 0; j < G_N_ELEMENTS(starts); j++) {
+      lock.l_start = starts[j];
+      int result;
+      do {
+        result = fcntl(fd, lock_command, &lock);
+      } while (result < 0 && errno == EINTR);
+      if (result < 0) {
+        if (errno == EACCES || errno == EAGAIN) {
+          volume_error(error, "volume disk is in use by a QEMU process");
+        } else {
+          volume_error(error, "could not lock the volume disk for removal");
+        }
+        close(fd);
+        return FALSE;
+      }
+    }
+  }
+  *fd_out = fd;
+  return TRUE;
+}
+
 static gboolean volume_list_unlocked(const char *project_directory,
                                      GPtrArray **volumes_out, GError **error) {
   if (error) {
@@ -438,6 +481,12 @@ gboolean quocker_volume_remove(const char *project_directory,
     volume_lock_release(lock_fd);
     return FALSE;
   }
+  int disk_fd = -1;
+  if (!volume_disk_lock_exclusive(selected->disk_path, &disk_fd, error)) {
+    g_ptr_array_free(volumes, TRUE);
+    volume_lock_release(lock_fd);
+    return FALSE;
+  }
   char *metadata_path = g_strconcat(selected->disk_path, ".name", NULL);
   gboolean removed = g_unlink(selected->disk_path) == 0;
   if (!removed) {
@@ -446,6 +495,7 @@ gboolean quocker_volume_remove(const char *project_directory,
     g_unlink(metadata_path);
   }
   g_free(metadata_path);
+  close(disk_fd);
   g_ptr_array_free(volumes, TRUE);
   volume_lock_release(lock_fd);
   return removed;
@@ -469,6 +519,21 @@ gboolean quocker_volume_remove_all(const char *project_directory,
     volume_lock_release(lock_fd);
     return FALSE;
   }
+  GArray *disk_fds = g_array_sized_new(FALSE, FALSE, sizeof(int), volumes->len);
+  for (guint i = 0; i < volumes->len; i++) {
+    QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
+    int disk_fd = -1;
+    if (!volume_disk_lock_exclusive(info->disk_path, &disk_fd, error)) {
+      for (guint j = 0; j < disk_fds->len; j++) {
+        close(g_array_index(disk_fds, int, j));
+      }
+      g_array_free(disk_fds, TRUE);
+      g_ptr_array_free(volumes, TRUE);
+      volume_lock_release(lock_fd);
+      return FALSE;
+    }
+    g_array_append_val(disk_fds, disk_fd);
+  }
   gboolean removed = TRUE;
   for (guint i = 0; i < volumes->len; i++) {
     QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
@@ -482,6 +547,10 @@ gboolean quocker_volume_remove_all(const char *project_directory,
     g_unlink(metadata_path);
     g_free(metadata_path);
   }
+  for (guint i = 0; i < disk_fds->len; i++) {
+    close(g_array_index(disk_fds, int, i));
+  }
+  g_array_free(disk_fds, TRUE);
   g_ptr_array_free(volumes, TRUE);
   volume_lock_release(lock_fd);
   return removed;

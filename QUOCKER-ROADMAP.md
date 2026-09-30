@@ -474,8 +474,10 @@ in user-facing compatibility promises.
    refuses while a project service has a live or unverified PID. A volume lock
    serializes disk creation/removal and quota checks; a project lifecycle lock
    protects VM state transitions and live-VM checks across local Quocker
-   processes. Richer ownership records, crash recovery, and cross-host
-   coordination remain to be implemented.
+   processes. QEMU file locks are enabled on managed volume attachments, and
+   deletion takes exclusive locks compatible with QEMU's raw-file permission
+   locks. Richer ownership records, crash recovery, and cross-host coordination
+   remain to be implemented.
 4. **Partially implemented:** project-scoped volume disk quotas default to
    20 GiB and are configurable with ``QUOCKER_VOLUME_QUOTA``; ``volume ls``
    and ``volume df`` report virtual capacity and actual filesystem allocation.
@@ -484,9 +486,10 @@ in user-facing compatibility promises.
    Global cache quotas, per-image accounting, retention policies, and garbage
    collection remain to be implemented.
 5. **Partially implemented:** project-local locks serialize volume mutations
-   and CLI VM lifecycle commands. Handle backing-chain compaction, snapshots,
-   storage consistency, crash recovery, image migration, cross-host coordination,
-   and safe deletion.
+   and CLI VM lifecycle commands; QEMU-compatible disk locks prevent deleting
+   active volume files. Handle backing-chain compaction, snapshots, storage
+   consistency, crash recovery, image migration, cross-host coordination, and
+   safe deletion.
 6. Define encryption-at-rest and secret handling for base disks, overlays,
    volume content, and provisioning data.
 

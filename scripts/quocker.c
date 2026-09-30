@@ -3208,7 +3208,8 @@ static gboolean run_qemu_service(const char *project, const char *root,
       }
       g_ptr_array_add(
           volume_drives,
-          g_strdup_printf("file=%s,if=virtio,format=raw", mount->disk_path));
+          g_strdup_printf("file=%s,file.locking=on,if=virtio,format=raw",
+                          mount->disk_path));
     }
   }
   YNode *extension = map_get(service, "x-quocker");

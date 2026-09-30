@@ -179,6 +179,11 @@ visible. The quota is checked before each new disk is created.
 Volume creation and removal are serialized with a project lock, including the
 quota check, so concurrent Quocker processes cannot create volumes past the
 configured limit.
+Quocker starts QEMU with file locking enabled for managed volume disks.
+``volume rm`` and ``down --volumes`` take QEMU-compatible exclusive locks
+before deleting disk files and refuse removal while a locking-aware QEMU
+process has them open. This protection cannot cover external QEMU invocations
+that explicitly disable file locking.
 ``down`` preserves these disks; ``down --volumes`` removes project volume disks
 after all project VMs have stopped. Bind mounts, tmpfs, external volumes,
 non-local drivers, driver options, and long-form volume suboptions are

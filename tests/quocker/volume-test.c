@@ -129,6 +129,29 @@ int main(void) {
   g_assert_cmpint(g_lstat(second, &st), ==, 0);
   g_assert_cmpint(st.st_size, ==, 64 * 1024 * 1024);
 
+#ifdef F_OFD_SETLK
+  int in_use_fd = open(first, O_RDONLY | O_CLOEXEC);
+  g_assert_cmpint(in_use_fd, >=, 0);
+  struct flock qemu_permission_lock = {
+      .l_type = F_RDLCK, .l_whence = SEEK_SET, .l_start = 100, .l_len = 1};
+  g_assert_cmpint(fcntl(in_use_fd, F_OFD_SETLK, &qemu_permission_lock), ==, 0);
+  g_assert_false(quocker_volume_remove(directory, "project:data", &error));
+  g_assert_error(error, g_quark_from_static_string("quocker-volume-error"), 1);
+  g_assert_nonnull(strstr(error->message, "in use"));
+  g_clear_error(&error);
+  g_assert_false(quocker_volume_remove_all(directory, &error));
+  g_assert_error(error, g_quark_from_static_string("quocker-volume-error"), 1);
+  g_assert_nonnull(strstr(error->message, "in use"));
+  g_clear_error(&error);
+  g_assert_true(quocker_volume_project_usage(
+      directory, &virtual_bytes, &allocated_bytes, &quota_bytes, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(virtual_bytes, ==, 128 * 1024 * 1024);
+  qemu_permission_lock.l_type = F_UNLCK;
+  g_assert_cmpint(fcntl(in_use_fd, F_OFD_SETLK, &qemu_permission_lock), ==, 0);
+  g_assert_cmpint(close(in_use_fd), ==, 0);
+#endif
+
   char *invalid = NULL;
   g_assert_false(
       quocker_volume_disk_prepare(directory, "bad", 1024, &invalid, &error));
