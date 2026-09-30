@@ -56,10 +56,16 @@ int main(int argc, char **argv) {
   }
   const char *pidfile = NULL;
   const char *qmp_option = NULL;
+  const char *vm_name = NULL;
+  const char *serial_option = NULL;
   int daemonize = 0;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-pidfile") == 0 && i + 1 < argc) {
       pidfile = argv[++i];
+    } else if (strcmp(argv[i], "-name") == 0 && i + 1 < argc) {
+      vm_name = argv[++i];
+    } else if (strcmp(argv[i], "-serial") == 0 && i + 1 < argc) {
+      serial_option = argv[++i];
     } else if (strcmp(argv[i], "-qmp") == 0 && i + 1 < argc) {
       qmp_option = argv[++i];
     } else if (strcmp(argv[i], "-daemonize") == 0) {
@@ -118,6 +124,29 @@ int main(int argc, char **argv) {
     close(STDIN_FILENO);
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
+  }
+  const char *exit_service = getenv("QUOCKER_FAKE_QEMU_EXIT_SERVICE");
+  const char *exit_status = getenv("QUOCKER_FAKE_QEMU_EXIT_STATUS");
+  const char *service_name = vm_name ? strrchr(vm_name, '-') : NULL;
+  service_name = service_name ? service_name + 1 : vm_name;
+  if (exit_service && exit_status && service_name &&
+      strcmp(exit_service, service_name) == 0 && serial_option &&
+      strncmp(serial_option, "file:", 5) == 0) {
+    FILE *serial = fopen(serial_option + 5, "a");
+    if (!serial) {
+      return 8;
+    }
+    fprintf(serial, "QUOCKER_EXIT status=%s\n", exit_status);
+    fclose(serial);
+    usleep(300000);
+    if (qmp_server >= 0) {
+      close(qmp_server);
+    }
+    if (qmp_path) {
+      unlink(qmp_path);
+      free(qmp_path);
+    }
+    return 0;
   }
   while (!stopped) {
     if (qmp_server >= 0) {

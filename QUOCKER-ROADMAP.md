@@ -123,9 +123,11 @@ has a meaningful VM equivalent.
   per-project lifecycle lock serializes state-changing commands and volume
   removal checks across local Quocker processes. A fake
   QEMU integration test covers stop, start, down, and wait. The `wait` command
-  blocks until selected saved VM processes stop and revalidates PID identity;
-  workload exit codes and event-driven waiting remain open. Guest readiness,
-  crash recovery, and most command compatibility remain open. `version` now
+  blocks until selected saved VM processes stop and revalidates PID identity.
+  `service_completed_successfully` waits for the dependency VM to exit and
+  starts dependents only after guest-reported status zero; `service_healthy`,
+  wait output, crash recovery, and most command compatibility remain open.
+  `version` now
   reports the Quocker interface and QEMU base versions, with a short form and
   the existing `--version` alias covered by a CLI test. New state files
   record Linux process start-time ticks; stop/status compare the recorded value
@@ -362,7 +364,8 @@ in user-facing compatibility promises.
    `pause`, and `unpause` now have initial saved-VM process handling; pause and
    resume use QMP, and the fake-QEMU integration test exercises these commands.
    `wait` blocks until selected VM processes stop and checks the recorded
-   process identity; guest workload exit codes remain unavailable. Crash
+   process identity; it does not print guest workload exit codes.
+   Crash
    recovery and complete flag compatibility remain unfinished. Implement only after Phase 0 defines
    VM semantics; explain commands with no meaningful VM equivalent.
    `port SERVICE PRIVATE_PORT[/PROTOCOL]` reports configured static host
@@ -372,8 +375,9 @@ in user-facing compatibility promises.
    orders them before dependents, and rejects cycles and missing required
    services. Short syntax and long syntax with `service_started` work;
    `up --dry-run` exposes startup order and `down --dry-run` exposes reverse
-   teardown order. Guest health/completion conditions and
-   dependency restart behavior await guest readiness and recreation tracking.
+   teardown order. `service_completed_successfully` waits for the dependency
+   VM to stop and requires guest-reported exit status zero. `service_healthy`
+   and dependency restart behavior await guest health and recreation tracking.
    Explicitly targeted services bypass inactive-profile filtering; selected
    target profiles become active for dependency validation, and incompatible
    required profiled dependencies are rejected. Optional dependencies marked
@@ -447,9 +451,11 @@ in user-facing compatibility promises.
    reports readiness/exit on serial. A C initrd builder appends this init and a
    bounded runtime config to the digest-verified catalog initrd. Remaining
    work: provision trust keys, maintain kernel/initrd assets and catalog
-   updates, implement guest network configuration, and report structured
-   readiness/shutdown to host state. OCI `up` currently relies on QEMU user
-   networking and a guest DHCP kernel command line.
+   updates, implement guest network configuration, and persist structured
+   readiness/shutdown in host state. The host consumes the guest exit marker
+   for `service_completed_successfully`; `wait` remains a process wait without
+   exit-code output. OCI `up` currently relies on QEMU user networking and a
+   guest DHCP kernel command line.
 6. Kernel selection must be inspectable and overrideable. OCI metadata does not
    specify a kernel or boot process, so image-specific automatic detection is
    heuristic: architecture and OS are reliable inputs, while distro identity

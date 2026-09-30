@@ -9,14 +9,16 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static gboolean run_cli(const char *cli, const char *directory,
-                        const char *compose_file, const char *command,
-                        gchar **stdout_text) {
+static gboolean run_cli_for_project(const char *cli, const char *directory,
+                                    const char *compose_file,
+                                    const char *project,
+                                    const char *service, const char *command,
+                                    gchar **stdout_text) {
   char *arguments[] = {(char *)cli,          (char *)"--project-directory",
                        (char *)directory,    (char *)"--project-name",
-                       (char *)"lifecycle",  (char *)"-f",
+                       (char *)project,      (char *)"-f",
                        (char *)compose_file, (char *)command,
-                       (char *)"app",        NULL};
+                       (char *)service,      NULL};
   gchar *stderr_text = NULL;
   gint status = 0;
   GError *error = NULL;
@@ -34,6 +36,13 @@ static gboolean run_cli(const char *cli, const char *directory,
   g_clear_error(&error);
   g_free(stderr_text);
   return ok;
+}
+
+static gboolean run_cli(const char *cli, const char *directory,
+                        const char *compose_file, const char *command,
+                        gchar **stdout_text) {
+  return run_cli_for_project(cli, directory, compose_file, "lifecycle", "app",
+                             command, stdout_text);
 }
 
 static gboolean remove_cli_volumes(const char *cli, const char *directory,
@@ -318,6 +327,64 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_true(run_cli(cli, directory, compose, "down", &output));
   g_free(output);
   g_unsetenv("QUOCKER_FAKE_QEMU_ARGV_FILE");
+
+  const char *completed_compose =
+      "services:\n"
+      "  app:\n"
+      "    image: ./disk.qcow2\n"
+      "    depends_on:\n"
+      "      job:\n"
+      "        condition: service_completed_successfully\n"
+      "  job:\n"
+      "    image: ./disk.qcow2\n";
+  g_assert_true(g_file_set_contents(compose, completed_compose, -1, &error));
+  g_assert_no_error(error);
+  g_setenv("QUOCKER_FAKE_QEMU_EXIT_SERVICE", "job", TRUE);
+  g_setenv("QUOCKER_FAKE_QEMU_EXIT_STATUS", "9", TRUE);
+  output = NULL;
+  g_assert_false(run_cli_for_project(cli, directory, compose,
+                                    "completed-failure", "app", "up",
+                                    &output));
+  g_assert_nonnull(strstr(output, "[completed-failure] job: started"));
+  g_assert_null(strstr(output, "[completed-failure] app: started"));
+  g_free(output);
+  output = NULL;
+  g_assert_true(run_cli_for_project(cli, directory, compose,
+                                    "completed-failure", "app", "down",
+                                    &output));
+  g_free(output);
+
+  g_setenv("QUOCKER_FAKE_QEMU_EXIT_STATUS", "0", TRUE);
+  output = NULL;
+  g_assert_true(run_cli_for_project(cli, directory, compose,
+                                    "completed-success", "app", "up",
+                                    &output));
+  g_assert_nonnull(strstr(output, "[completed-success] job: started"));
+  g_assert_nonnull(strstr(output, "[completed-success] app: started"));
+  g_free(output);
+  g_unsetenv("QUOCKER_FAKE_QEMU_EXIT_SERVICE");
+  g_unsetenv("QUOCKER_FAKE_QEMU_EXIT_STATUS");
+  output = NULL;
+  g_assert_true(run_cli_for_project(cli, directory, compose,
+                                    "completed-success", "app", "down",
+                                    &output));
+  g_free(output);
+  const char *completed_projects[] = {"completed-failure", "completed-success"};
+  const char *completed_files[] = {
+      "app.log", "job.log", "app.qcow2", "app.qcow2.base", "job.qcow2",
+      "job.qcow2.base", ".lifecycle.lock"};
+  for (guint i = 0; i < G_N_ELEMENTS(completed_projects); i++) {
+    char *project_directory =
+        g_build_filename(directory, ".quocker", completed_projects[i], NULL);
+    for (guint j = 0; j < G_N_ELEMENTS(completed_files); j++) {
+      char *path = g_build_filename(project_directory, completed_files[j],
+                                    NULL);
+      g_unlink(path);
+      g_free(path);
+    }
+    g_assert_cmpint(g_rmdir(project_directory), ==, 0);
+    g_free(project_directory);
+  }
 
   char *volumes_directory = g_build_filename(state_directory, "volumes", NULL);
   char *volume_disk =

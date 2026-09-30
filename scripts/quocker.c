@@ -18,6 +18,7 @@
 #include "quocker-oci.h"
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
@@ -29,6 +30,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/time.h>
@@ -2630,6 +2632,23 @@ static gboolean pid_exists(pid_t pid) {
   return pid > 1 && (kill(pid, 0) == 0 || errno == EPERM);
 }
 
+static gboolean process_is_zombie(pid_t pid) {
+  if (pid <= 1 || !g_file_test("/proc", G_FILE_TEST_IS_DIR)) {
+    return FALSE;
+  }
+  char *path = g_strdup_printf("/proc/%d/stat", pid);
+  gchar *contents = NULL;
+  gboolean found = FALSE;
+  if (g_file_get_contents(path, &contents, NULL, NULL)) {
+    char *close = strrchr(contents, ')');
+    found = close && close[1] == ' ' &&
+            (close[2] == 'Z' || close[2] == 'X');
+  }
+  g_free(contents);
+  g_free(path);
+  return found;
+}
+
 static int signal_process(pid_t pid, const char *project, const char *service,
                           guint64 expected_start_time, int signal_number) {
   if (pid <= 1) {
@@ -4871,6 +4890,24 @@ typedef struct UpOrder {
   gboolean validate_runtime_conditions;
 } UpOrder;
 
+static YNode *service_by_name(YNode *services, const char *name);
+
+static GHashTable *up_active_profiles(YNode *services, Options *opts) {
+  GHashTable *profiles =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  for (guint i = 0; i < opts->profiles->len; i++) {
+    g_hash_table_add(profiles, g_strdup(g_ptr_array_index(opts->profiles, i)));
+  }
+  for (guint i = 0; i < opts->services->len; i++) {
+    YNode *target = service_by_name(services,
+                                    g_ptr_array_index(opts->services, i));
+    if (target) {
+      add_service_profiles(profiles, target);
+    }
+  }
+  return profiles;
+}
+
 static YNode *service_by_name(YNode *services, const char *name) {
   for (guint i = 0; i < services->items->len; i++) {
     YPair *pair = g_ptr_array_index(services->items, i);
@@ -4941,9 +4978,11 @@ static gboolean up_order_visit(UpOrder *order, const char *name) {
       if (condition_node) {
         condition = node_string(condition_node);
       }
-      if (g_strcmp0(condition, "service_started") != 0) {
+      if (g_strcmp0(condition, "service_started") != 0 &&
+          g_strcmp0(condition, "service_completed_successfully") != 0) {
         fail("service '%s': depends_on.%s condition '%s' requires guest "
-             "readiness support; only service_started is currently supported",
+             "health reporting; only service_started and "
+             "service_completed_successfully are currently supported",
              name, dependency, condition ? condition : "(invalid)");
         return FALSE;
       }
@@ -5022,21 +5061,9 @@ static gboolean for_up_services(YNode *services, Options *opts,
   order.services = services;
   order.opts = opts;
   order.marks = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  order.active_profiles =
-      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  order.active_profiles = up_active_profiles(services, opts);
   order.ordered = g_ptr_array_new();
   order.validate_runtime_conditions = TRUE;
-  for (guint i = 0; i < opts->profiles->len; i++) {
-    g_hash_table_add(order.active_profiles,
-                     g_strdup(g_ptr_array_index(opts->profiles, i)));
-  }
-  for (guint i = 0; i < opts->services->len; i++) {
-    YNode *target =
-        service_by_name(services, g_ptr_array_index(opts->services, i));
-    if (target) {
-      add_service_profiles(order.active_profiles, target);
-    }
-  }
   gboolean ok = TRUE;
   for (guint i = 0; i < services->items->len && ok; i++) {
     YPair *pair = g_ptr_array_index(services->items, i);
@@ -5108,6 +5135,9 @@ typedef struct UpContext {
   const char *project;
   const char *root;
   const char *directory;
+  YNode *services;
+  GHashTable *active_profiles;
+  int lifecycle_lock_fd;
   YNode *volume_resources;
   PullContext *pull_context;
   GHashTable *project_environment;
@@ -5251,6 +5281,185 @@ static gboolean service_image_is_local(YNode *service, const char *root) {
   return local;
 }
 
+#define QUOCKER_GUEST_LOG_TAIL_BYTES (256 * 1024)
+
+static gboolean wait_for_vm_stop(const char *project, const char *directory,
+                                 const char *name) {
+  pid_t pid = read_pid(directory, name);
+  if (pid <= 1) {
+    fail("service '%s' has no saved VM state to wait for", name);
+    return FALSE;
+  }
+  guint64 start_time = state_process_start_time(directory, name);
+  while (process_running(pid, project, name, start_time)) {
+    g_usleep(100000);
+  }
+  gboolean pid_still_exists = pid_exists(pid);
+  guint64 remaining_start_time =
+      pid_still_exists ? process_start_time(pid) : 0;
+  if (pid_still_exists &&
+      (!start_time || (remaining_start_time &&
+                       remaining_start_time != start_time))) {
+    fail("service '%s': saved PID %d no longer matches this VM", name, pid);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static gboolean guest_exit_status_read(const char *directory, const char *name,
+                                       int *status_out) {
+  char *path = g_strdup_printf("%s/%s.log", directory, name);
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0) {
+    fail("service '%s': cannot read guest completion log: %s", name,
+         g_strerror(errno));
+    g_free(path);
+    return FALSE;
+  }
+  struct stat st;
+  if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size < 0) {
+    fail("service '%s': guest completion log is not a regular file", name);
+    close(fd);
+    g_free(path);
+    return FALSE;
+  }
+  off_t start = st.st_size > QUOCKER_GUEST_LOG_TAIL_BYTES
+                    ? st.st_size - QUOCKER_GUEST_LOG_TAIL_BYTES
+                    : 0;
+  if (lseek(fd, start, SEEK_SET) < 0) {
+    fail("service '%s': cannot seek guest completion log: %s", name,
+         g_strerror(errno));
+    close(fd);
+    g_free(path);
+    return FALSE;
+  }
+  gsize capacity = (gsize)(st.st_size - start);
+  char *contents = g_malloc(capacity + 1);
+  gsize length = 0;
+  while (length < capacity) {
+    ssize_t count = read(fd, contents + length, capacity - length);
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count <= 0) {
+      fail("service '%s': guest completion log changed while being read",
+           name);
+      close(fd);
+      g_free(contents);
+      g_free(path);
+      return FALSE;
+    }
+    length += (gsize)count;
+  }
+  close(fd);
+  contents[length] = '\0';
+  const char *last_marker = NULL;
+  gsize offset = 0;
+  while (offset < length) {
+    const char *marker =
+        g_strstr_len(contents + offset, length - offset, "QUOCKER_EXIT ");
+    if (!marker) {
+      break;
+    }
+    last_marker = marker;
+    offset = (gsize)(marker - contents) + 1;
+  }
+  gboolean ok = FALSE;
+  if (!last_marker) {
+    fail("service '%s' stopped without a Quocker guest completion status",
+         name);
+  } else if (g_str_has_prefix(last_marker, "QUOCKER_EXIT status=")) {
+    const char *value = last_marker + strlen("QUOCKER_EXIT status=");
+    char *end = NULL;
+    gint64 status = g_ascii_strtoll(value, &end, 10);
+    if (end != value && status >= 0 && status <= 255 &&
+        (*end == '\n' || *end == '\r' || *end == '\0')) {
+      *status_out = (int)status;
+      ok = TRUE;
+    } else {
+      fail("service '%s' wrote an invalid Quocker guest completion status",
+           name);
+    }
+  } else {
+    fail("service '%s' did not exit successfully inside the guest", name);
+  }
+  g_free(contents);
+  g_free(path);
+  return ok;
+}
+
+static gboolean wait_completed_dependency(const char *service_name,
+                                          UpContext *ctx) {
+  if (ctx->lifecycle_lock_fd >= 0 &&
+      flock(ctx->lifecycle_lock_fd, LOCK_UN) < 0) {
+    fail("could not release project lifecycle lock while waiting: %s",
+         g_strerror(errno));
+    return FALSE;
+  }
+  gboolean stopped =
+      wait_for_vm_stop(ctx->project, ctx->directory, service_name);
+  if (ctx->lifecycle_lock_fd >= 0) {
+    while (flock(ctx->lifecycle_lock_fd, LOCK_EX) < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      fail("could not reacquire project lifecycle lock after waiting: %s",
+           g_strerror(errno));
+      return FALSE;
+    }
+  }
+  if (!stopped) {
+    return FALSE;
+  }
+  int guest_status = -1;
+  if (!guest_exit_status_read(ctx->directory, service_name, &guest_status)) {
+    return FALSE;
+  }
+  if (guest_status != 0) {
+    fail("service '%s' exited in the guest with status %d", service_name,
+         guest_status);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static gboolean wait_completed_dependencies(const char *name, YNode *service,
+                                            UpContext *ctx) {
+  YNode *depends = map_get(service, "depends_on");
+  if (!depends || depends->kind != NODE_MAPPING) {
+    return TRUE;
+  }
+  for (guint i = 0; i < depends->items->len; i++) {
+    YPair *entry = g_ptr_array_index(depends->items, i);
+    const char *dependency = node_string(entry->key);
+    YNode *options = entry->value;
+    const char *condition = node_string(map_get(options, "condition"));
+    if (g_strcmp0(condition, "service_completed_successfully") != 0) {
+      continue;
+    }
+    YNode *dependency_service = service_by_name(ctx->services, dependency);
+    gboolean required = TRUE;
+    YNode *required_node = map_get(options, "required");
+    if (required_node && required_node->kind == NODE_SCALAR &&
+        g_str_equal(required_node->scalar, "false")) {
+      required = FALSE;
+    }
+    if (!dependency_service ||
+        !service_profiles_active(dependency_service, ctx->active_profiles)) {
+      if (!required) {
+        continue;
+      }
+      fail("service '%s' requires unavailable completed dependency '%s'",
+           name, dependency ? dependency : "(invalid)");
+      return FALSE;
+    }
+    if (!wait_completed_dependency(dependency, ctx)) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
 static gboolean up_one(const char *name, YNode *service, void *data) {
   UpContext *ctx = data;
   if (ctx->dry_run) {
@@ -5267,6 +5476,9 @@ static gboolean up_one(const char *name, YNode *service, void *data) {
     }
     g_free(forwards);
     return ports_valid;
+  }
+  if (!wait_completed_dependencies(name, service, ctx)) {
+    return FALSE;
   }
   char *saved_state_path = state_path(ctx->directory, name);
   struct stat saved_state_stat;
@@ -5298,7 +5510,7 @@ static gboolean up_one(const char *name, YNode *service, void *data) {
     g_print("[%s] %s: already running (pid %d)\n", ctx->project, name, pid);
     return TRUE;
   }
-  if (pid_exists(pid)) {
+  if (pid_exists(pid) && !process_is_zombie(pid)) {
     fail("service '%s': saved PID %d belongs to a different or unverifiable "
          "process; refusing to start another VM until its state is inspected",
          name, pid);
@@ -5363,7 +5575,8 @@ static gboolean run_up_services(YNode *services, Options *opts,
                                 const char *directory,
                                 YNode *volume_resources,
                                 GHashTable *project_environment,
-                                gboolean start_only) {
+                                gboolean start_only,
+                                int lifecycle_lock_fd) {
   char *cache = g_build_filename(g_get_user_cache_dir(), "quocker", "oci",
                                  NULL);
   const char *catalog = g_getenv("QUOCKER_KERNEL_CATALOG");
@@ -5375,8 +5588,20 @@ static gboolean run_up_services(YNode *services, Options *opts,
       public_key && *public_key ? public_key
                                 : "/etc/quocker/kernel-catalog.pub",
   };
-  UpContext context = {project, root, directory, volume_resources, &pull_context,
-                       project_environment, opts->dry_run, start_only};
+  GHashTable *active_profiles = up_active_profiles(services, opts);
+  UpContext context = {
+      .project = project,
+      .root = root,
+      .directory = directory,
+      .services = services,
+      .active_profiles = active_profiles,
+      .lifecycle_lock_fd = lifecycle_lock_fd,
+      .volume_resources = volume_resources,
+      .pull_context = &pull_context,
+      .project_environment = project_environment,
+      .dry_run = opts->dry_run,
+      .start_only = start_only,
+  };
   PortPreflight preflight = {
       g_ptr_array_new_with_free_func(
           (GDestroyNotify)published_port_owner_free),
@@ -5395,6 +5620,7 @@ static gboolean run_up_services(YNode *services, Options *opts,
             project);
   }
   g_free(cache);
+  g_hash_table_destroy(active_profiles);
   return ok;
 }
 
@@ -5421,7 +5647,7 @@ static gboolean stop_one(const char *name, YNode *service, void *data) {
   }
   pid_t pid = read_pid(ctx->directory, name);
   if (!process_running(pid, ctx->project, name, state_process_start_time(ctx->directory, name))) {
-    if (pid_exists(pid)) {
+    if (pid_exists(pid) && !process_is_zombie(pid)) {
       fail("service '%s': saved PID %d does not match this VM; refusing to "
            "signal or remove its state", name, pid);
       return FALSE;
@@ -5475,7 +5701,7 @@ static gboolean kill_one(const char *name, YNode *service, void *data) {
   }
   pid_t pid = read_pid(ctx->directory, name);
   if (!process_running(pid, ctx->project, name, state_process_start_time(ctx->directory, name))) {
-    if (pid_exists(pid)) {
+    if (pid_exists(pid) && !process_is_zombie(pid)) {
       fail("service '%s': saved PID %d does not match this VM; refusing to "
            "signal it", name, pid);
       return FALSE;
@@ -5547,7 +5773,7 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
   guint64 start_time = state_process_start_time(ctx->directory, name);
   gboolean running = process_running(
       pid, ctx->project, name, start_time);
-  if (!running && pid_exists(pid)) {
+  if (!running && pid_exists(pid) && !process_is_zombie(pid)) {
     fail("service '%s': saved PID %d does not match this VM; refusing to "
          "remove its state", name, pid);
     return FALSE;
@@ -5629,7 +5855,7 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
       const char *other_name = node_string(pair->key);
       if (other_name && !g_str_equal(other_name, name)) {
         pid_t other_pid = read_pid(ctx->directory, other_name);
-        if (pid_exists(other_pid) ||
+        if ((pid_exists(other_pid) && !process_is_zombie(other_pid)) ||
             process_running(
                 other_pid, ctx->project, other_name,
                 state_process_start_time(ctx->directory, other_name))) {
@@ -5681,25 +5907,7 @@ typedef struct WaitContext {
 static gboolean wait_one(const char *name, YNode *service, void *data) {
   (void)service;
   WaitContext *ctx = data;
-  pid_t pid = read_pid(ctx->directory, name);
-  if (pid <= 1) {
-    fail("service '%s' has no saved VM state to wait for", name);
-    return FALSE;
-  }
-  guint64 start_time = state_process_start_time(ctx->directory, name);
-  while (process_running(pid, ctx->project, name, start_time)) {
-    g_usleep(100000);
-  }
-  guint64 remaining_start_time =
-      pid_exists(pid) ? process_start_time(pid) : 0;
-  if (pid_exists(pid) &&
-      (!start_time || (remaining_start_time &&
-                       remaining_start_time != start_time))) {
-    fail("service '%s': saved PID %d no longer matches this VM", name, pid);
-    return FALSE;
-  }
-  g_print("[%s] %s: stopped\n", ctx->project, name);
-  return TRUE;
+  return wait_for_vm_stop(ctx->project, ctx->directory, name);
 }
 
 typedef struct PortContext {
@@ -6477,7 +6685,8 @@ static gboolean project_has_live_vm(YNode *services, const char *project,
     struct stat state_stat;
     gboolean state_exists = g_lstat(saved_state, &state_stat) == 0;
     g_free(saved_state);
-    if (pid_exists(pid) || (state_exists && pid <= 1)) {
+    if ((pid_exists(pid) && !process_is_zombie(pid)) ||
+        (state_exists && pid <= 1)) {
       gboolean verified = process_running(
           pid, project, name, state_process_start_time(directory, name));
       fail("cannot remove project volumes while service '%s' has a live or "
@@ -6672,7 +6881,8 @@ int main(int argc, char **argv) {
              g_str_equal(opts.command, "start")) {
     ok = run_up_services(services, &opts, project_lower, root, directory,
                          map_get(config, "volumes"), project_environment,
-                         g_str_equal(opts.command, "start"));
+                         g_str_equal(opts.command, "start"),
+                         lifecycle_lock_fd);
   } else if (g_str_equal(opts.command, "stop")) {
     ServiceSignalContext context = {project_lower, directory, opts.dry_run,
                                     SIGTERM};
@@ -6695,7 +6905,7 @@ int main(int argc, char **argv) {
     if (ok) {
       ok = run_up_services(services, &opts, project_lower, root, directory,
                            map_get(config, "volumes"), project_environment,
-                           TRUE);
+                           TRUE, lifecycle_lock_fd);
     }
   } else if (g_str_equal(opts.command, "down") ||
              g_str_equal(opts.command, "rm")) {

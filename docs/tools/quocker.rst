@@ -434,12 +434,17 @@ Runtime state, logs, PID files, and disk overlays live under
 and automatically includes required dependencies when a service is selected.
 Short syntax and long syntax with ``condition: service_started`` are
 supported. This means the dependency's QEMU process has started; it does not
-claim that an application inside the guest is ready. ``service_healthy`` and
-``service_completed_successfully`` are rejected until Quocker has guest
-readiness and completion reporting. Dependency cycles and missing required
-services fail before any VM is started. Long-form ``required: false`` skips a
-missing optional dependency. ``up --dry-run`` prints the dependency-ordered
-start plan without creating project state or starting VMs. ``down --dry-run``
+claim that an application inside the guest is ready. Long syntax with
+``condition: service_completed_successfully`` waits for the dependency VM to
+stop and starts its dependents only when the guest reports exit status zero.
+For OCI-backed services, the bundled guest init writes this completion record;
+local disk images need to provide an equivalent serial record to use this
+condition. A service that stops without a completion record fails.
+``service_healthy`` remains unsupported until guest health reporting is
+available. Dependency cycles and missing required services fail before any VM
+is started. Long-form ``required: false`` skips a missing optional dependency.
+``up --dry-run`` prints the dependency-ordered start plan without creating
+project state or starting VMs. ``down --dry-run``
 shows the corresponding reverse order, stopping dependents before dependencies.
 An explicitly named service starts even when its profile was not globally
 enabled; Quocker starts only that service and its declared dependencies.
