@@ -1491,6 +1491,7 @@ static const char *service_field_capability(const char *field,
 static gboolean config_write_capabilities(const YNode *config,
                                           const char *root) {
   GPtrArray *rows = g_ptr_array_new_with_free_func(g_free);
+  GPtrArray *resource_rows = g_ptr_array_new_with_free_func(g_free);
   YNode *services = map_get(config, "services");
   for (guint i = 0; services && i < services->items->len; i++) {
     YPair *service_pair = g_ptr_array_index(services->items, i);
@@ -1516,6 +1517,40 @@ static gboolean config_write_capabilities(const YNode *config,
     g_print("%s\n", (char *)g_ptr_array_index(rows, i));
   }
   g_ptr_array_free(rows, TRUE);
+  for (guint i = 0; i < config->items->len; i++) {
+    YPair *pair = g_ptr_array_index(config->items, i);
+    const char *kind = node_string(pair->key);
+    const char *status = NULL;
+    if (g_strcmp0(kind, "volumes") == 0) {
+      status = "partially supported VM disks; bind and tmpfs mounts "
+               "unsupported";
+    } else if (g_strcmp0(kind, "networks") == 0) {
+      status = "partially supported QEMU user networking; named networks "
+               "unsupported";
+    } else if (g_strcmp0(kind, "configs") == 0 ||
+               g_strcmp0(kind, "secrets") == 0) {
+      status = "unsupported; not provisioned into guests";
+    }
+    if (!status || pair->value->kind != NODE_MAPPING) {
+      continue;
+    }
+    for (guint j = 0; j < pair->value->items->len; j++) {
+      YPair *resource = g_ptr_array_index(pair->value->items, j);
+      const char *name = node_string(resource->key);
+      if (name) {
+        g_ptr_array_add(resource_rows,
+                        g_strdup_printf("%s\t%s\t%s", kind, name, status));
+      }
+    }
+  }
+  if (resource_rows->len) {
+    g_ptr_array_sort(resource_rows, compare_string_pointers);
+    g_print("RESOURCE\tNAME\tSTATUS\n");
+    for (guint i = 0; i < resource_rows->len; i++) {
+      g_print("%s\n", (char *)g_ptr_array_index(resource_rows, i));
+    }
+  }
+  g_ptr_array_free(resource_rows, TRUE);
   return TRUE;
 }
 

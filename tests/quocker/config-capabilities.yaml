@@ -13,3 +13,13 @@ services:
     working_dir: /srv/app
     healthcheck:
       test: ["CMD", "true"]
+volumes:
+  data: {}
+networks:
+  frontend: {}
+configs:
+  app-config:
+    file: ./app.conf
+secrets:
+  app-secret:
+    file: ./secret.txt

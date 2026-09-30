@@ -37,6 +37,13 @@ int main(int argc, char **argv) {
       "guest\tcommand\tOCI guest workload setting",
       "guest\tworking_dir\tOCI guest workload setting",
       "guest\thealthcheck\tunsupported",
+      "RESOURCE\tNAME\tSTATUS",
+      "configs\tapp-config\tunsupported; not provisioned into guests",
+      "networks\tfrontend\tpartially supported QEMU user networking; "
+      "named networks unsupported",
+      "secrets\tapp-secret\tunsupported; not provisioned into guests",
+      "volumes\tdata\tpartially supported VM disks; bind and tmpfs mounts "
+      "unsupported",
       NULL,
   };
   ok = ok && stdout_text;
