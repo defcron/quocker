@@ -1893,6 +1893,37 @@ static void config_resolve_volume_source(YNode *source, const char *base,
   g_clear_pointer(&source->compose_scalar, g_free);
 }
 
+static gboolean config_build_context_is_local(const char *context) {
+  if (!context || !*context || g_str_has_prefix(context, "git@")) {
+    return FALSE;
+  }
+  char *scheme = g_uri_parse_scheme(context);
+  gboolean is_local = scheme == NULL;
+  g_free(scheme);
+  return is_local;
+}
+
+static void config_resolve_service_build_path(YNode *service,
+                                              const char *base,
+                                              gboolean no_path_resolution) {
+  if (no_path_resolution) {
+    return;
+  }
+  YNode *build = map_get(service, "build");
+  YNode *context = build && build->kind == NODE_MAPPING
+                       ? map_get(build, "context")
+                       : build;
+  const char *value = node_string(context);
+  if (!value || g_path_is_absolute(value) ||
+      !config_build_context_is_local(value)) {
+    return;
+  }
+  char *absolute = absolute_path(value, base);
+  g_free(context->scalar);
+  context->scalar = absolute;
+  g_clear_pointer(&context->compose_scalar, g_free);
+}
+
 static void config_resolve_service_volume_paths(YNode *service,
                                                 const char *base,
                                                 gboolean no_path_resolution) {
@@ -2202,6 +2233,8 @@ static void resolve_included_service_paths(YNode *service,
       }
     }
   }
+  config_resolve_service_build_path(service, project_directory,
+                                    no_path_resolution);
   config_resolve_service_volume_paths(service, project_directory,
                                      no_path_resolution);
 }
@@ -2900,6 +2933,8 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
   YNode *services = map_get(interpolated, "services");
   for (guint i = 0; services && i < services->items->len; i++) {
     YPair *service_pair = g_ptr_array_index(services->items, i);
+    config_resolve_service_build_path(service_pair->value, root,
+                                      no_path_resolution);
     config_resolve_service_volume_paths(service_pair->value, root,
                                         no_path_resolution);
   }

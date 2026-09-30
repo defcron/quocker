@@ -47,6 +47,18 @@ int main(int argc, char **argv) {
   g_free(resource_directory);
   JsonObject *services = json_object_get_object_member(root, "services");
   JsonObject *app = json_object_get_object_member(services, "app");
+  JsonObject *build = json_object_get_object_member(app, "build");
+  char *build_directory = g_path_get_dirname(argv[1]);
+  char *build_context =
+      g_build_filename(build_directory, "config-json-build", NULL);
+  char *expected_build_context = g_canonicalize_filename(build_context, NULL);
+  g_assert_cmpstr(json_object_get_string_member(build, "context"), ==,
+                  expected_build_context);
+  g_assert_cmpstr(json_object_get_string_member(build, "dockerfile"), ==,
+                  "Dockerfile");
+  g_free(expected_build_context);
+  g_free(build_context);
+  g_free(build_directory);
   g_assert_cmpstr(json_object_get_string_member(app, "image"), ==,
                   "alpine:latest");
   JsonNode *cpus = json_object_get_member(app, "cpus");
@@ -234,6 +246,11 @@ int main(int argc, char **argv) {
                   ==, "../config-json-secret.txt");
   services = json_object_get_object_member(root, "services");
   app = json_object_get_object_member(services, "app");
+  build = json_object_get_object_member(app, "build");
+  g_assert_cmpstr(json_object_get_string_member(build, "context"), ==,
+                  "./config-json-build");
+  g_assert_cmpstr(json_object_get_string_member(build, "dockerfile"), ==,
+                  "Dockerfile");
   mounts = json_object_get_array_member(app, "volumes");
   g_assert_cmpstr(json_array_get_string_element(mounts, 0), ==,
                   "./relative-volume:/data:ro");

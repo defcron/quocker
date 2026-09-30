@@ -8,6 +8,9 @@ secrets:
 services:
   app:
     image: "alpine:latest"
+    build:
+      context: ./config-json-build
+      dockerfile: Dockerfile
     env_file:
       - config-json-base.env
       - config-json-override.env
