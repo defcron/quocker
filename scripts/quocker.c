@@ -78,6 +78,7 @@ typedef struct Options {
   char *project_directory;
   char *command;
   char *config_format;
+  char *config_output_path;
   char *config_list_mode;
   char *port_spec;
   gboolean detach;
@@ -1293,14 +1294,14 @@ static gboolean emit_node(yaml_emitter_t *emitter, const YNode *node) {
          yaml_emitter_emit(emitter, &event);
 }
 
-static gboolean yaml_write_stdout(const YNode *root) {
+static gboolean yaml_write_stream(const YNode *root, FILE *output) {
   yaml_emitter_t emitter;
   yaml_event_t event;
   gboolean ok = yaml_emitter_initialize(&emitter);
   if (!ok) {
     return FALSE;
   }
-  yaml_emitter_set_output_file(&emitter, stdout);
+  yaml_emitter_set_output_file(&emitter, output);
   yaml_emitter_set_unicode(&emitter, TRUE);
   ok = yaml_stream_start_event_initialize(&event, YAML_UTF8_ENCODING) &&
        yaml_emitter_emit(&emitter, &event) &&
@@ -1415,7 +1416,7 @@ static void json_add_yaml_value(JsonBuilder *builder, const YNode *node,
   json_builder_add_string_value(builder, text);
 }
 
-static gboolean json_write_stdout(const YNode *root) {
+static gboolean json_write_stream(const YNode *root, FILE *output) {
   JsonBuilder *builder = json_builder_new();
   json_add_yaml_value(builder, root, FALSE);
   JsonNode *document = json_builder_get_root(builder);
@@ -1424,12 +1425,64 @@ static gboolean json_write_stdout(const YNode *root) {
   char *text = json_generator_to_data(generator, NULL);
   gboolean ok = text != NULL;
   if (ok) {
-    g_print("%s\n", text);
+    ok = fprintf(output, "%s\n", text) >= 0;
   }
   g_free(text);
   g_object_unref(generator);
   json_node_free(document);
   g_object_unref(builder);
+  return ok;
+}
+
+static gboolean config_write_atomic(const YNode *root, const char *format,
+                                   const char *path) {
+  char *directory = g_path_get_dirname(path);
+  char *basename = g_path_get_basename(path);
+  char *temporary = g_strdup_printf("%s/.%s.tmp.XXXXXX", directory,
+                                    basename);
+  int fd = g_mkstemp(temporary);
+  gboolean ok = fd >= 0;
+  FILE *output = NULL;
+  if (ok) {
+    ok = fchmod(fd, 0600) == 0;
+  }
+  if (ok) {
+    output = fdopen(fd, "w");
+    ok = output != NULL;
+  }
+  if (!output && fd >= 0) {
+    close(fd);
+  }
+  if (ok) {
+    ok = g_strcmp0(format, "json") == 0
+             ? json_write_stream(root, output)
+             : yaml_write_stream(root, output);
+  }
+  if (output) {
+    ok = fflush(output) == 0 && ok;
+    ok = fsync(fileno(output)) == 0 && ok;
+    ok = fclose(output) == 0 && ok;
+  }
+  if (ok) {
+    ok = g_rename(temporary, path) == 0;
+  }
+  if (ok) {
+    int directory_fd = open(directory, O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+    ok = directory_fd >= 0;
+    if (ok) {
+      ok = fsync(directory_fd) == 0;
+      close(directory_fd);
+    }
+  }
+  if (!ok) {
+    int saved_errno = errno;
+    g_unlink(temporary);
+    fail("could not write config output '%s': %s", path,
+         g_strerror(saved_errno ? saved_errno : EIO));
+  }
+  g_free(temporary);
+  g_free(basename);
+  g_free(directory);
   return ok;
 }
 
@@ -6742,6 +6795,7 @@ static void usage(FILE *file) {
           "      --profile PROFILE       Enable a service profile\n\n"
           "  up --wait [--wait-timeout SEC] Wait for guest workloads to be ready\n"
           "  config --format yaml|json   Select config output format\n"
+          "  config -o, --output FILE   Write rendered config to a file\n"
           "  config --services|--profiles|--images  List config entries\n"
           "  config --volumes|--networks   List declared resources\n"
           "  config --capabilities       Report service-field support\n"
@@ -6937,6 +6991,23 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
       g_free(opts->config_list_mode);
       opts->config_list_mode = g_strdup(mode);
     } else if (opts->command && g_str_equal(opts->command, "config") &&
+               (g_str_equal(arg, "-o") || g_str_equal(arg, "--output"))) {
+      if (++i >= argc || !argv[i][0]) {
+        fail("config --output requires a file path");
+        return FALSE;
+      }
+      g_free(opts->config_output_path);
+      opts->config_output_path = g_strdup(argv[i]);
+    } else if (opts->command && g_str_equal(opts->command, "config") &&
+               g_str_has_prefix(arg, "--output=")) {
+      const char *path = arg + strlen("--output=");
+      if (!*path) {
+        fail("config --output requires a file path");
+        return FALSE;
+      }
+      g_free(opts->config_output_path);
+      opts->config_output_path = g_strdup(path);
+    } else if (opts->command && g_str_equal(opts->command, "config") &&
                g_str_equal(arg, "--format")) {
       if (++i >= argc ||
           (!g_str_equal(argv[i], "yaml") && !g_str_equal(argv[i], "json"))) {
@@ -6999,6 +7070,11 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
   }
   if (opts->config_list_mode && opts->config_format) {
     fail("config output selection cannot be combined with --format");
+    return FALSE;
+  }
+  if (opts->config_output_path &&
+      (opts->config_list_mode || opts->quiet)) {
+    fail("config --output cannot be combined with list or quiet output modes");
     return FALSE;
   }
   if (g_str_equal(opts->command, "port") &&
@@ -7556,7 +7632,10 @@ int main(int argc, char **argv) {
   }
   gboolean ok = FALSE;
   if (g_str_equal(opts.command, "config")) {
-    ok = opts.quiet ||
+    ok = opts.config_output_path
+             ? config_write_atomic(config, opts.config_format,
+                                   opts.config_output_path)
+         : opts.quiet ||
          (opts.config_list_mode
               ? (g_str_equal(opts.config_list_mode, "environment")
                      ? config_write_environment(project_environment)
@@ -7564,8 +7643,8 @@ int main(int argc, char **argv) {
                      ? config_write_capabilities(config, root)
                      : config_write_list(config, opts.config_list_mode))
               : (g_strcmp0(opts.config_format, "json") == 0
-                     ? json_write_stdout(config)
-                     : yaml_write_stdout(config)));
+                     ? json_write_stream(config, stdout)
+                     : yaml_write_stream(config, stdout)));
   } else if (g_str_equal(opts.command, "up") ||
              g_str_equal(opts.command, "start")) {
     ok = run_up_services(services, &opts, project_lower, root, directory,
@@ -7666,6 +7745,7 @@ int main(int argc, char **argv) {
   g_ptr_array_free(opts.services, TRUE);
   g_free(opts.command);
   g_free(opts.config_format);
+  g_free(opts.config_output_path);
   g_free(opts.config_list_mode);
   g_free(opts.port_spec);
   g_free(opts.project_name);

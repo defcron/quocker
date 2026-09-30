@@ -4,7 +4,7 @@ _quocker() {
     COMPREPLY=()
     cur=${COMP_WORDS[COMP_CWORD]}
     prev=${COMP_WORDS[COMP_CWORD-1]}
-    commands='compose up start stop restart kill pause unpause down rm ps logs wait volume pull prune config port version kernel'
+    commands='compose up start stop restart kill pause unpause down rm ps images logs wait volumes volume pull prune config port version kernel'
     global_options='-h --help -f --file -p --project-name --project-directory --env-file --profile'
 
     command_index=1
@@ -15,7 +15,7 @@ _quocker() {
                 ;;
             compose)
                 (( command_index++ ))
-                commands='up start stop restart kill pause unpause down rm ps logs wait volume pull prune config port version'
+                commands='up start stop restart kill pause unpause down rm ps images logs wait volumes volume pull prune config port version'
                 ;;
             -*)
                 (( command_index++ ))
@@ -40,7 +40,10 @@ _quocker() {
     command=${COMP_WORDS[command_index]}
     case $command in
         config)
-            command_options='--format --environment --services --profiles --images --volumes --networks --quiet'
+            command_options='--format -o --output --environment --services --profiles --images --volumes --networks --quiet'
+            if [[ $prev == -o || $prev == --output ]]; then
+                return
+            fi
             if [[ $prev == --format ]]; then
                 COMPREPLY=( $(compgen -W 'yaml json' -- "$cur") )
                 return

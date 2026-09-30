@@ -88,7 +88,7 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 70 focused tests; its latest run reported 44
+  Meson suite currently has 74 focused tests; its latest run reported 48
   passes, 26 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
@@ -368,8 +368,9 @@ in user-facing compatibility promises.
 8. **Partially implemented:** profiles and project-name resolution work for
    service selection and interpolation. `config` emits YAML or JSON, lists
    sorted services, profiles, images, volumes, or networks, and prints the
-   interpolation environment. Schema-aware normalization, image resolution,
-   path output modes, and the remaining Docker Compose config flags remain.
+   interpolation environment; `-o`/`--output` atomically writes rendered YAML
+   or JSON. Schema-aware normalization, image resolution, path output modes,
+   and the remaining Docker Compose config flags remain.
 9. **Partially implemented:** service-level `x-quocker` is versioned as
    version 1, with omitted version treated as legacy shorthand for version 1.
    The strict C validator accepts only `image` and `kernel` extension fields,

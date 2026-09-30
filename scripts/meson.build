@@ -136,6 +136,13 @@ if not get_option('quocker').disabled()
          args: [files('../tests/quocker/config-json.yaml')],
          env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
          suite: ['quocker'])
+    quocker_config_output_test = executable(
+      'quocker-config-output-test',
+      files('../tests/quocker/config-output-test.c'),
+      dependencies: [glib, quocker_json])
+    test('quocker-config-output', quocker_config_output_test,
+         env: ['QUOCKER_CLI=' + quocker.full_path()], depends: [quocker],
+         suite: ['quocker'])
     quocker_cli_alias_test = executable(
       'quocker-cli-alias-test', files('../tests/quocker/cli-alias-test.c'),
       dependencies: [glib])

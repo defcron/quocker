@@ -65,7 +65,8 @@ treated as successful.
    * - ``config``
      - VM-adapted, partial
      - Validates, resolves, merges, renders, and lists selected Compose model
-       information; full canonical normalization and option parity remain.
+       information; ``-o``/``--output`` writes YAML or JSON atomically. Full
+       canonical normalization and option parity remain.
    * - ``start``, ``stop``, ``restart``, ``kill``
      - VM-adapted, partial
      - Operate on saved QEMU process state; restart follows supported
@@ -450,7 +451,10 @@ subcommand shape (``quocker compose up``).
 accepts ``--format yaml`` (the default) and ``--format json``. JSON output
 retains quoted scalars as strings and emits plain YAML booleans, numbers, and
 nulls as JSON primitives. It validates the merged file against the pinned
-Compose schema before rendering. Schema validation checks file structure and
+Compose schema before rendering. Use ``-o FILE`` or ``--output FILE`` to write
+the rendered document to a file instead of standard output. Quocker writes a
+private temporary file in the destination directory and renames it into place
+after serialization succeeds. Schema validation checks file structure and
 syntax; it does not mean every accepted field has a VM runtime implementation.
 ``quocker up -d`` starts all services. ``quocker ps`` shows their state and
 disk overlays. ``quocker logs [SERVICE]`` shows serial output;
