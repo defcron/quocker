@@ -433,8 +433,10 @@ that explicitly disable file locking.
 Write-side volume operations repair interrupted metadata updates and remove
 orphan sidecars and abandoned staging files after a crash. Recovery runs under
 the project volume lock; read-only listing does not alter the volume directory.
-``down`` preserves these disks; ``down --volumes`` removes project volume disks
-after all project VMs have stopped. Bind mounts, tmpfs, external volumes,
+``down`` preserves these disks; ``down --volumes`` removes named volumes used
+by selected services and their anonymous service volumes, while preserving
+unreferenced project disks. It refuses volume deletion if another declared VM
+is still running. Bind mounts, tmpfs, external volumes,
 non-local drivers, driver options, and long-form volume suboptions are
 currently rejected for OCI guests. Local QEMU disk services do not interpret
 Compose volume mounts. New disks start empty: Quocker does not implement

@@ -551,6 +551,13 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_cmpint(volume_fd, >=, 0);
   g_assert_cmpint(ftruncate(volume_fd, 64 * 1024 * 1024), ==, 0);
   g_assert_cmpint(close(volume_fd), ==, 0);
+  char *unrelated_volume_disk =
+      g_build_filename(volumes_directory, "unrelated.ext4", NULL);
+  int unrelated_volume_fd =
+      open(unrelated_volume_disk, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+  g_assert_cmpint(unrelated_volume_fd, >=, 0);
+  g_assert_cmpint(ftruncate(unrelated_volume_fd, 64 * 1024 * 1024), ==, 0);
+  g_assert_cmpint(close(unrelated_volume_fd), ==, 0);
   const char *mkfs_arguments[] = {"mke2fs", "-q", "-t",        "ext4", "-F",
                                   "-m",     "0",  volume_disk, NULL};
   gint mkfs_status = 0;
@@ -560,12 +567,67 @@ static void test_stop_preserves_vm_state(void) {
   g_assert_no_error(error);
   g_assert_true(g_spawn_check_wait_status(mkfs_status, &error));
   g_assert_no_error(error);
+  const char *unrelated_mkfs_arguments[] = {
+      "mke2fs", "-q", "-t", "ext4", "-F", "-m", "0",
+      unrelated_volume_disk, NULL};
+  g_assert_true(g_spawn_sync(NULL, (char **)unrelated_mkfs_arguments, NULL,
+                             G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL,
+                             &mkfs_status, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_spawn_check_wait_status(mkfs_status, &error));
+  g_assert_no_error(error);
+  char *volume_metadata = g_strconcat(volume_disk, ".name", NULL);
+  char *unrelated_volume_metadata =
+      g_strconcat(unrelated_volume_disk, ".name", NULL);
+  g_assert_true(g_file_set_contents(volume_metadata,
+                                    "lifecycle:vm-data\n", -1, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(g_chmod(volume_metadata, 0600), ==, 0);
+  g_assert_true(g_file_set_contents(unrelated_volume_metadata,
+                                    "lifecycle:unrelated\n", -1, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(g_chmod(unrelated_volume_metadata, 0600), ==, 0);
+  g_assert_true(g_file_set_contents(
+      compose,
+      "services:\n  app:\n    image: ./disk.qcow2\n    "
+      "volumes: [persistent:/data]\nvolumes:\n  persistent:\n    "
+      "name: vm-data\n",
+      -1, &error));
+  g_assert_no_error(error);
+  char *dry_run_arguments[] = {
+      (char *)cli, (char *)"--project-directory", directory,
+      (char *)"--project-name", (char *)"lifecycle", (char *)"-f",
+      compose, (char *)"down", (char *)"--dry-run", (char *)"--volumes",
+      (char *)"app", NULL};
+  gchar *dry_run_output = NULL;
+  gchar *dry_run_error = NULL;
+  gint dry_run_status = 0;
+  GError *dry_run_gerror = NULL;
+  g_assert_true(g_spawn_sync(NULL, dry_run_arguments, NULL, G_SPAWN_DEFAULT,
+                             NULL, NULL, &dry_run_output, &dry_run_error,
+                             &dry_run_status, &dry_run_gerror));
+  g_assert_no_error(dry_run_gerror);
+  g_assert_true(g_spawn_check_wait_status(dry_run_status, &dry_run_gerror));
+  g_assert_no_error(dry_run_gerror);
+  g_assert_nonnull(strstr(dry_run_output,
+                          "Would remove volume lifecycle:vm-data"));
+  g_assert_null(strstr(dry_run_output, "Removed volume"));
+  g_assert_true(g_file_test(volume_disk, G_FILE_TEST_IS_REGULAR));
+  g_assert_true(g_file_test(unrelated_volume_disk, G_FILE_TEST_IS_REGULAR));
+  g_free(dry_run_output);
+  g_free(dry_run_error);
   g_assert_true(remove_cli_volumes(cli, directory, compose));
   g_assert_false(g_file_test(volume_disk, G_FILE_TEST_EXISTS));
+  g_assert_false(g_file_test(volume_metadata, G_FILE_TEST_EXISTS));
+  g_assert_true(g_file_test(unrelated_volume_disk, G_FILE_TEST_IS_REGULAR));
+  g_assert_true(
+      g_file_test(unrelated_volume_metadata, G_FILE_TEST_IS_REGULAR));
   g_assert_true(g_file_test(volumes_directory, G_FILE_TEST_IS_DIR));
   char *volume_lock =
       g_build_filename(volumes_directory, ".quocker.lock", NULL);
   g_assert_cmpint(g_unlink(volume_lock), ==, 0);
+  g_assert_cmpint(g_unlink(unrelated_volume_metadata), ==, 0);
+  g_assert_cmpint(g_unlink(unrelated_volume_disk), ==, 0);
   g_assert_cmpint(g_rmdir(volumes_directory), ==, 0);
 
   g_assert_false(g_file_test(overlay_sidecar, G_FILE_TEST_EXISTS));
@@ -588,6 +650,9 @@ static void test_stop_preserves_vm_state(void) {
   g_free(quocker_directory);
   g_free(volume_lock);
   g_free(volume_disk);
+  g_free(volume_metadata);
+  g_free(unrelated_volume_metadata);
+  g_free(unrelated_volume_disk);
   g_free(volumes_directory);
   g_free(state_path);
   g_free(pidfile);

@@ -573,7 +573,9 @@ in user-facing compatibility promises.
    1 TiB.
 3. **Partially implemented:** volumes are created on demand with logical-name
    metadata, listed and inspected per project, and removed with ``down
-   --volumes`` or ``quocker volume rm``. Removal has a dry-run preview and
+   --volumes`` or ``quocker volume rm``. ``down --volumes`` targets named
+   volumes referenced by the selected services and their anonymous volumes;
+   it leaves unrelated project disks intact. Removal has a dry-run preview and
    refuses while a project service has a live or unverified PID. A volume lock
    serializes disk creation/removal and quota checks; a project lifecycle lock
    protects VM state transitions and live-VM checks across local Quocker

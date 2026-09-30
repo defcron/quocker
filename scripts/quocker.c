@@ -6239,9 +6239,7 @@ static gboolean run_up_services(YNode *services, Options *opts,
 typedef struct DownContext {
   const char *project;
   const char *directory;
-  YNode *services;
   gboolean remove_overlay;
-  gboolean remove_volumes;
   gboolean dry_run;
   guint shutdown_timeout_seconds;
 } DownContext;
@@ -6464,34 +6462,6 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
     }
     g_free(remaining_overlay);
   }
-  if (ctx->remove_volumes) {
-    gboolean project_stopped = TRUE;
-    for (guint i = 0; i < ctx->services->items->len; i++) {
-      YPair *pair = g_ptr_array_index(ctx->services->items, i);
-      const char *other_name = node_string(pair->key);
-      if (other_name && !g_str_equal(other_name, name)) {
-        pid_t other_pid = read_pid(ctx->directory, other_name);
-        if ((pid_exists(other_pid) && !process_is_zombie(other_pid)) ||
-            process_running(
-                other_pid, ctx->project, other_name,
-                state_process_start_time(ctx->directory, other_name))) {
-          project_stopped = FALSE;
-          break;
-        }
-      }
-    }
-    if (project_stopped) {
-      GError *volume_error = NULL;
-      if (!quocker_volume_remove_all(ctx->directory, &volume_error)) {
-        fail("project volumes could not be removed: %s",
-             volume_error ? volume_error->message : "unknown volume error");
-        g_clear_error(&volume_error);
-        g_free(state);
-        g_free(pidfile);
-        return FALSE;
-      }
-    }
-  }
   g_free(state);
   g_free(pidfile);
   return TRUE;
@@ -6499,7 +6469,8 @@ static gboolean down_one(const char *name, YNode *service, void *data) {
 
 static gboolean remove_anonymous_volumes_for_service(const char *directory,
                                                       const char *project,
-                                                      const char *service) {
+                                                      const char *service,
+                                                      gboolean dry_run) {
   char *prefix = g_strdup_printf("%s:%s:", project, service);
   GPtrArray *volumes = NULL;
   GError *error = NULL;
@@ -6514,14 +6485,18 @@ static gboolean remove_anonymous_volumes_for_service(const char *directory,
   for (guint i = 0; ok && i < volumes->len; i++) {
     QuockerVolumeInfo *volume = g_ptr_array_index(volumes, i);
     if (g_str_has_prefix(volume->logical_name, prefix)) {
-      ok = quocker_volume_remove(directory, volume->logical_name, &error);
-      if (!ok) {
-        fail("service '%s': could not remove anonymous VM volume '%s': %s",
-             service, volume->logical_name,
-             error ? error->message : "unknown volume error");
-        g_clear_error(&error);
+      if (dry_run) {
+        g_print("Would remove anonymous volume %s\n", volume->logical_name);
       } else {
-        g_print("Removed anonymous volume %s\n", volume->logical_name);
+        ok = quocker_volume_remove(directory, volume->logical_name, &error);
+        if (!ok) {
+          fail("service '%s': could not remove anonymous VM volume '%s': %s",
+               service, volume->logical_name,
+               error ? error->message : "unknown volume error");
+          g_clear_error(&error);
+        } else {
+          g_print("Removed anonymous volume %s\n", volume->logical_name);
+        }
       }
     }
   }
@@ -6542,9 +6517,7 @@ static gboolean rm_one(const char *name, YNode *service, void *data) {
   }
   DownContext down_context = {ctx->project,
                               ctx->directory,
-                              ctx->services,
                               TRUE,
-                              FALSE,
                               FALSE,
                               ctx->shutdown_timeout_seconds};
   if (!down_one(name, service, &down_context)) {
@@ -6552,7 +6525,7 @@ static gboolean rm_one(const char *name, YNode *service, void *data) {
   }
   return !ctx->remove_anonymous_volumes ||
          remove_anonymous_volumes_for_service(ctx->directory, ctx->project,
-                                              name);
+                                              name, FALSE);
 }
 
 static gboolean remove_orphan_services(const char *project,
@@ -6597,11 +6570,16 @@ static gboolean remove_orphan_services(const char *project,
   }
   g_dir_close(saved);
   g_ptr_array_sort(orphans, compare_string_pointers);
-  DownContext context = {project, directory, services, remove_volumes,
-                         remove_volumes, dry_run, shutdown_timeout_seconds};
+  DownContext context = {project, directory, remove_volumes, dry_run,
+                         shutdown_timeout_seconds};
   gboolean ok = TRUE;
   for (guint i = 0; ok && i < orphans->len; i++) {
-    ok = down_one(g_ptr_array_index(orphans, i), NULL, &context);
+    const char *name = g_ptr_array_index(orphans, i);
+    ok = down_one(name, NULL, &context);
+    if (ok && remove_volumes) {
+      ok = remove_anonymous_volumes_for_service(directory, project, name,
+                                                dry_run);
+    }
   }
   g_ptr_array_free(orphans, TRUE);
   return ok;
@@ -7963,6 +7941,182 @@ static gboolean project_has_live_vm(YNode *services, const char *project,
   return FALSE;
 }
 
+static gboolean volume_declaration_is_external(YNode *declaration) {
+  YNode *external_node = map_get(declaration, "external");
+  const char *external = node_string(external_node);
+  return external_node && (!external || g_str_equal(external, "true"));
+}
+
+static gboolean add_down_named_volume(YNode *spec, YNode *volume_resources,
+                                      const char *project,
+                                      GHashTable *logical_names) {
+  const char *source = NULL;
+  const char *type = "volume";
+  if (spec->kind == NODE_SCALAR) {
+    gchar **parts = g_strsplit(spec->scalar ? spec->scalar : "", ":", 3);
+    if (g_strv_length(parts) > 1) {
+      source = parts[0];
+    }
+    if (source && !*source) {
+      source = NULL;
+    }
+    if (!source || compose_volume_source_is_bind(source)) {
+      g_strfreev(parts);
+      return TRUE;
+    }
+    char *source_copy = g_strdup(source);
+    g_strfreev(parts);
+    source = source_copy;
+    YNode *declaration = map_get(volume_resources, source);
+    if (declaration && declaration->kind == NODE_MAPPING) {
+      const char *driver = node_string(map_get(declaration, "driver"));
+      if (volume_declaration_is_external(declaration) ||
+          (driver && !g_str_equal(driver, "local"))) {
+        g_free((char *)source);
+        return TRUE;
+      }
+      const char *custom_name = node_string(map_get(declaration, "name"));
+      if (custom_name && *custom_name) {
+        char *renamed_source = g_strdup(custom_name);
+        g_free((char *)source);
+        source = renamed_source;
+      }
+    }
+  } else if (spec->kind == NODE_MAPPING) {
+    type = node_string(map_get(spec, "type"));
+    source = node_string(map_get(spec, "source"));
+    if (!source || !*source ||
+        compose_volume_source_is_bind(source) ||
+        !g_str_equal(type ? type : "volume", "volume")) {
+      return TRUE;
+    }
+    YNode *declaration = map_get(volume_resources, source);
+    if (declaration && declaration->kind == NODE_MAPPING) {
+      const char *driver = node_string(map_get(declaration, "driver"));
+      if (volume_declaration_is_external(declaration) ||
+          (driver && !g_str_equal(driver, "local"))) {
+        return TRUE;
+      }
+      const char *custom_name = node_string(map_get(declaration, "name"));
+      if (custom_name && *custom_name) {
+        source = custom_name;
+      }
+    }
+  } else {
+    return TRUE;
+  }
+  char *logical_name = g_strdup_printf("%s:%s", project, source);
+  g_hash_table_add(logical_names, logical_name);
+  if (spec->kind == NODE_SCALAR) {
+    g_free((char *)source);
+  }
+  return TRUE;
+}
+
+static gboolean remove_down_volumes(const char *project,
+                                    const char *directory, YNode *services,
+                                    YNode *volume_resources, Options *opts) {
+  if (!opts->dry_run && project_has_live_vm(services, project, directory)) {
+    return FALSE;
+  }
+  GHashTable *named = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                            NULL);
+  GHashTable *retained_named = g_hash_table_new_full(
+      g_str_hash, g_str_equal, g_free, NULL);
+  GHashTable *selected_names =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  GPtrArray *anonymous_prefixes = g_ptr_array_new_with_free_func(g_free);
+  UpOrder order = {0};
+  order.services = services;
+  order.opts = opts;
+  order.marks = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  order.ordered = g_ptr_array_new();
+  order.validate_runtime_conditions = FALSE;
+  gboolean ok = TRUE;
+  for (guint i = 0; ok && i < services->items->len; i++) {
+    YPair *pair = g_ptr_array_index(services->items, i);
+    const char *name = node_string(pair->key);
+    if (name && service_requested(opts, name) &&
+        (opts->services->len > 0 || service_profile_enabled(pair->value, opts))) {
+      ok = up_order_visit(&order, name);
+    }
+  }
+  for (guint i = 0; ok && i < order.ordered->len; i++) {
+    const char *name = g_ptr_array_index(order.ordered, i);
+    g_hash_table_add(selected_names, g_strdup(name));
+    char *prefix = g_strdup_printf("%s:%s:", project, name);
+    g_ptr_array_add(anonymous_prefixes, prefix);
+  }
+  for (guint i = 0; ok && i < services->items->len; i++) {
+    YPair *pair = g_ptr_array_index(services->items, i);
+    const char *name = node_string(pair->key);
+    if (!name) {
+      continue;
+    }
+    gboolean selected = g_hash_table_contains(selected_names, name);
+    YNode *mounts = map_get(pair->value, "volumes");
+    for (guint j = 0; ok && mounts && j < mounts->items->len; j++) {
+      ok = add_down_named_volume(g_ptr_array_index(mounts->items, j),
+                                 volume_resources, project,
+                                 selected ? named : retained_named);
+    }
+  }
+  if (!ok) {
+    g_hash_table_destroy(named);
+    g_hash_table_destroy(retained_named);
+    g_hash_table_destroy(selected_names);
+    g_hash_table_destroy(order.marks);
+    g_ptr_array_free(order.ordered, TRUE);
+    g_ptr_array_free(anonymous_prefixes, TRUE);
+    return FALSE;
+  }
+  g_hash_table_destroy(order.marks);
+  g_ptr_array_free(order.ordered, TRUE);
+  GPtrArray *volumes = NULL;
+  GError *error = NULL;
+  if (!quocker_volume_list(directory, &volumes, &error)) {
+    fail("could not inspect project volumes: %s",
+         error ? error->message : "unknown volume error");
+    g_clear_error(&error);
+    g_hash_table_destroy(named);
+    g_hash_table_destroy(retained_named);
+    g_hash_table_destroy(selected_names);
+    g_ptr_array_free(anonymous_prefixes, TRUE);
+    return FALSE;
+  }
+  for (guint i = 0; ok && i < volumes->len; i++) {
+    QuockerVolumeInfo *volume = g_ptr_array_index(volumes, i);
+    gboolean remove =
+        g_hash_table_contains(named, volume->logical_name) &&
+        !g_hash_table_contains(retained_named, volume->logical_name);
+    for (guint j = 0; !remove && j < anonymous_prefixes->len; j++) {
+      remove = g_str_has_prefix(
+          volume->logical_name, g_ptr_array_index(anonymous_prefixes, j));
+    }
+    if (remove) {
+      if (opts->dry_run) {
+        g_print("Would remove volume %s\n", volume->logical_name);
+      } else {
+        ok = quocker_volume_remove(directory, volume->logical_name, &error);
+        if (!ok) {
+          fail("could not remove project volume '%s': %s",
+               volume->logical_name,
+               error ? error->message : "unknown volume error");
+          g_clear_error(&error);
+        } else {
+          g_print("Removed volume %s\n", volume->logical_name);
+        }
+      }
+    }
+  }
+  g_ptr_array_free(volumes, TRUE);
+  g_hash_table_destroy(named);
+  g_hash_table_destroy(retained_named);
+  g_hash_table_destroy(selected_names);
+  g_ptr_array_free(anonymous_prefixes, TRUE);
+  return ok;
+}
+
 static gboolean volume_command(const char *action, const char *name,
                                gboolean dry_run, YNode *services,
                                const char *project, const char *directory) {
@@ -8183,8 +8337,7 @@ int main(int argc, char **argv) {
                            TRUE, lifecycle_lock_fd);
     }
   } else if (g_str_equal(opts.command, "down")) {
-    DownContext context = {project_lower, directory, services,
-                           opts.remove_volumes, opts.remove_volumes,
+    DownContext context = {project_lower, directory, opts.remove_volumes,
                            opts.dry_run,
                            opts.shutdown_timeout_seconds};
     ok = for_down_services(services, &opts, down_one, &context);
@@ -8192,6 +8345,10 @@ int main(int argc, char **argv) {
       ok = remove_orphan_services(project_lower, directory, services,
                                   opts.remove_volumes, opts.dry_run,
                                   opts.shutdown_timeout_seconds);
+    }
+    if (ok && opts.remove_volumes) {
+      ok = remove_down_volumes(project_lower, directory, services,
+                               map_get(config, "volumes"), &opts);
     }
   } else if (g_str_equal(opts.command, "rm")) {
     RmContext context = {project_lower, directory, services, opts.rm_stop,
