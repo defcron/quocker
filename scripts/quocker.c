@@ -5567,7 +5567,7 @@ static void usage(FILE *file) {
           "      --dry-run              Print the dependency-ordered lifecycle "
           "plan\n\n"
           "Commands: up, start, stop, restart, kill, pause, unpause, down, "
-          "rm, ps, logs, volume ls, "
+          "rm, ps, logs, volume ls|inspect|rm, "
           "pull, prune, config, port\n"
           "  kill: -s SIGNAL             Signal to send (default SIGKILL)\n"
           "Kernel tools: quocker kernel select|fetch --platform OS/ARCH "
@@ -5662,7 +5662,8 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
                 g_str_equal(opts->command, "kill") ||
                 g_str_equal(opts->command, "pause") ||
                 g_str_equal(opts->command, "unpause") ||
-                g_str_equal(opts->command, "down"))) {
+                g_str_equal(opts->command, "down") ||
+                g_str_equal(opts->command, "volume"))) {
       opts->dry_run = TRUE;
     } else if (opts->command && g_str_equal(opts->command, "kill") &&
                (g_str_equal(arg, "-s") || g_str_equal(arg, "--signal"))) {
@@ -5748,11 +5749,20 @@ static gboolean parse_options(int argc, char **argv, Options *opts) {
     fail("port requires SERVICE PRIVATE_PORT[/PROTOCOL]");
     return FALSE;
   }
-  if (g_str_equal(opts->command, "volume") &&
-      (opts->services->len != 1 ||
-       (!g_str_equal(g_ptr_array_index(opts->services, 0), "ls") &&
-        !g_str_equal(g_ptr_array_index(opts->services, 0), "list")))) {
-    fail("volume requires the 'ls' subcommand");
+  if (g_str_equal(opts->command, "volume") && opts->services->len > 0) {
+    const char *action = g_ptr_array_index(opts->services, 0);
+    gboolean valid_action =
+        g_str_equal(action, "ls") || g_str_equal(action, "list") ||
+        g_str_equal(action, "inspect") || g_str_equal(action, "rm");
+    guint expected_arguments =
+        g_str_equal(action, "ls") || g_str_equal(action, "list") ? 1 : 2;
+    if (!valid_action || opts->services->len != expected_arguments ||
+        (opts->dry_run && !g_str_equal(action, "rm"))) {
+      fail("usage: quocker volume ls|inspect NAME|rm [--dry-run] NAME");
+      return FALSE;
+    }
+  } else if (g_str_equal(opts->command, "volume")) {
+    fail("usage: quocker volume ls|inspect NAME|rm [--dry-run] NAME");
     return FALSE;
   }
   return TRUE;
@@ -6078,6 +6088,100 @@ static int kernel_update_command(int argc, char **argv) {
   return ok ? 0 : 1;
 }
 
+static QuockerVolumeInfo *find_project_volume(GPtrArray *volumes,
+                                              const char *name) {
+  for (guint i = 0; i < volumes->len; i++) {
+    QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
+    if (g_str_equal(info->logical_name, name)) {
+      return info;
+    }
+  }
+  return NULL;
+}
+
+static gboolean project_has_live_vm(YNode *services, const char *project,
+                                    const char *directory) {
+  for (guint i = 0; i < services->items->len; i++) {
+    YPair *pair = g_ptr_array_index(services->items, i);
+    const char *name = node_string(pair->key);
+    pid_t pid = read_pid(directory, name);
+    char *saved_state = state_path(directory, name);
+    struct stat state_stat;
+    gboolean state_exists = g_lstat(saved_state, &state_stat) == 0;
+    g_free(saved_state);
+    if (pid_exists(pid) || (state_exists && pid <= 1)) {
+      gboolean verified = process_running(
+          pid, project, name, state_process_start_time(directory, name));
+      fail("cannot remove project volumes while service '%s' has a live or "
+           "unverified PID %d%s",
+           name, pid, verified ? "" : "; inspect its saved state first");
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+static gboolean volume_command(const char *action, const char *name,
+                               gboolean dry_run, YNode *services,
+                               const char *project, const char *directory) {
+  GPtrArray *volumes = NULL;
+  GError *error = NULL;
+  if (!quocker_volume_list(directory, &volumes, &error)) {
+    fail("cannot read project volumes: %s",
+         error ? error->message : "unknown volume error");
+    g_clear_error(&error);
+    return FALSE;
+  }
+  if (g_str_equal(action, "ls") || g_str_equal(action, "list")) {
+    g_print("NAME\tSIZE\n");
+    for (guint i = 0; i < volumes->len; i++) {
+      QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
+      char *size =
+          g_format_size_full(info->size_bytes, G_FORMAT_SIZE_IEC_UNITS);
+      g_print("%s\t%s\n", info->logical_name, size);
+      g_free(size);
+    }
+    g_ptr_array_free(volumes, TRUE);
+    return TRUE;
+  }
+  QuockerVolumeInfo *info = find_project_volume(volumes, name);
+  if (!info) {
+    fail("volume '%s' does not exist in project '%s'", name, project);
+    g_ptr_array_free(volumes, TRUE);
+    return FALSE;
+  }
+  if (g_str_equal(action, "inspect")) {
+    char *size = g_format_size_full(info->size_bytes, G_FORMAT_SIZE_IEC_UNITS);
+    g_print("Name: %s\nProject: %s\nSize: %s\nDisk: %s\n", info->logical_name,
+            project, size, info->disk_path);
+    g_free(size);
+    g_ptr_array_free(volumes, TRUE);
+    return TRUE;
+  }
+  if (project_has_live_vm(services, project, directory)) {
+    g_ptr_array_free(volumes, TRUE);
+    return FALSE;
+  }
+  if (dry_run) {
+    g_print("Would remove volume %s (%s)\n", info->logical_name,
+            info->disk_path);
+    g_ptr_array_free(volumes, TRUE);
+    return TRUE;
+  }
+  char *logical_name = g_strdup(info->logical_name);
+  g_ptr_array_free(volumes, TRUE);
+  gboolean removed = quocker_volume_remove(directory, logical_name, &error);
+  if (!removed) {
+    fail("cannot remove volume '%s': %s", logical_name,
+         error ? error->message : "unknown volume error");
+  } else {
+    g_print("Removed volume %s\n", logical_name);
+  }
+  g_clear_error(&error);
+  g_free(logical_name);
+  return removed;
+}
+
 int main(int argc, char **argv) {
   if (argc >= 3 && g_str_equal(argv[1], "kernel")) {
     if (g_str_equal(argv[2], "select")) {
@@ -6182,26 +6286,11 @@ int main(int argc, char **argv) {
     PortContext context = {opts.port_spec, directory, project_lower};
     ok = for_services(services, &opts, port_one, &context);
   } else if (g_str_equal(opts.command, "volume")) {
-    GPtrArray *volumes = NULL;
-    GError *volume_error = NULL;
-    ok = quocker_volume_list(directory, &volumes, &volume_error);
-    if (!ok) {
-      fail("cannot list project volumes: %s",
-           volume_error ? volume_error->message : "unknown volume error");
-    } else {
-      g_print("NAME\tSIZE\n");
-      for (guint i = 0; i < volumes->len; i++) {
-        QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
-        char *size =
-            g_format_size_full(info->size_bytes, G_FORMAT_SIZE_IEC_UNITS);
-        g_print("%s\t%s\n", info->logical_name, size);
-        g_free(size);
-      }
-    }
-    g_clear_error(&volume_error);
-    if (volumes) {
-      g_ptr_array_free(volumes, TRUE);
-    }
+    const char *action = g_ptr_array_index(opts.services, 0);
+    const char *volume_name =
+        opts.services->len == 2 ? g_ptr_array_index(opts.services, 1) : NULL;
+    ok = volume_command(action, volume_name, opts.dry_run, services,
+                        project_lower, directory);
   } else if (g_str_equal(opts.command, "logs")) {
     LogsContext context = {directory, &opts};
     ok = for_services(services, &opts, logs_one, &context);

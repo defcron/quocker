@@ -5,6 +5,34 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+static gchar *run_volume_command(const char *cli, const char *project,
+                                 const char *compose, const char *action,
+                                 const char *name, gboolean dry_run,
+                                 gboolean expect_success) {
+  char *arguments[] = {(char *)cli,       (char *)"--project-directory",
+                       (char *)project,   (char *)"--project-name",
+                       (char *)"project", (char *)"-f",
+                       (char *)compose,   (char *)"volume",
+                       (char *)action,    dry_run ? (char *)"--dry-run" : NULL,
+                       (char *)name,      NULL};
+  if (!dry_run) {
+    arguments[9] = arguments[10];
+    arguments[10] = NULL;
+  }
+  gchar *stdout_text = NULL;
+  gchar *stderr_text = NULL;
+  gint status = 0;
+  GError *error = NULL;
+  g_assert_true(g_spawn_sync(NULL, arguments, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+                             &stdout_text, &stderr_text, &status, &error));
+  g_assert_no_error(error);
+  gboolean succeeded = g_spawn_check_wait_status(status, &error);
+  g_assert_cmpint(succeeded, ==, expect_success);
+  g_clear_error(&error);
+  g_free(stderr_text);
+  return stdout_text;
+}
+
 int main(void) {
   GError *error = NULL;
   char *directory = g_dir_make_tmp("quocker-volume-test-XXXXXX", &error);
@@ -87,8 +115,33 @@ int main(void) {
     g_free(stderr_text);
     char *metadata = g_strconcat(disk, ".name", NULL);
     char *volume_dir = g_path_get_dirname(disk);
-    g_assert_cmpint(g_unlink(metadata), ==, 0);
-    g_assert_cmpint(g_unlink(disk), ==, 0);
+    stdout_text = run_volume_command(cli, project, compose, "inspect",
+                                     "project:data", FALSE, TRUE);
+    g_assert_nonnull(strstr(stdout_text, "Name: project:data"));
+    g_assert_nonnull(strstr(stdout_text, "Size: 64"));
+    g_free(stdout_text);
+    stdout_text = run_volume_command(cli, project, compose, "rm",
+                                     "project:data", TRUE, TRUE);
+    g_assert_nonnull(strstr(stdout_text, "Would remove volume project:data"));
+    g_free(stdout_text);
+    g_assert_true(g_file_test(disk, G_FILE_TEST_IS_REGULAR));
+    char *pid_path = g_build_filename(quocker_state, "app.state", NULL);
+    char *pid_text = g_strdup_printf("%d\n", (int)getpid());
+    g_assert_true(g_file_set_contents(pid_path, pid_text, -1, &error));
+    g_assert_no_error(error);
+    stdout_text = run_volume_command(cli, project, compose, "rm",
+                                     "project:data", FALSE, FALSE);
+    g_free(stdout_text);
+    g_assert_true(g_file_test(disk, G_FILE_TEST_IS_REGULAR));
+    g_assert_cmpint(g_unlink(pid_path), ==, 0);
+    g_free(pid_text);
+    g_free(pid_path);
+    stdout_text = run_volume_command(cli, project, compose, "rm",
+                                     "project:data", FALSE, TRUE);
+    g_assert_nonnull(strstr(stdout_text, "Removed volume project:data"));
+    g_free(stdout_text);
+    g_assert_false(g_file_test(disk, G_FILE_TEST_EXISTS));
+    g_assert_false(g_file_test(metadata, G_FILE_TEST_EXISTS));
     g_assert_cmpint(g_rmdir(volume_dir), ==, 0);
     g_assert_cmpint(g_rmdir(quocker_state), ==, 0);
     char *metadata_root = g_build_filename(project, ".quocker", NULL);

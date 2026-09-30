@@ -307,7 +307,10 @@ disk overlays. ``quocker logs [SERVICE]`` shows serial output, and
 their disks. ``quocker down --volumes`` stops services and removes their
 overlays and project volume disks. ``quocker volume ls`` lists persistent VM
 volumes for the current Compose project with their logical names and virtual
-sizes. ``quocker pull`` downloads OCI manifests/config/layer blobs and
+sizes. ``quocker volume inspect NAME`` shows one volume's backing disk and
+size. ``quocker volume rm [--dry-run] NAME`` removes a volume from the current
+project; it refuses while a project service has a live or unverified PID.
+``quocker pull`` downloads OCI manifests/config/layer blobs and
 materializes rootfs data and a raw ext4 guest disk in
 ``$XDG_CACHE_HOME/quocker/oci`` (or the platform cache directory). OCI-backed
 ``up`` can boot this guest disk when a compatible signed kernel catalog and

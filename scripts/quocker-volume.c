@@ -201,6 +201,45 @@ gboolean quocker_volume_list(const char *project_directory,
   return TRUE;
 }
 
+gboolean quocker_volume_remove(const char *project_directory,
+                               const char *logical_name, GError **error) {
+  if (error) {
+    *error = NULL;
+  }
+  if (!project_directory || !g_path_is_absolute(project_directory) ||
+      !logical_name || !*logical_name) {
+    volume_error(error, "project volume directory or name is invalid");
+    return FALSE;
+  }
+  GPtrArray *volumes = NULL;
+  if (!quocker_volume_list(project_directory, &volumes, error)) {
+    return FALSE;
+  }
+  QuockerVolumeInfo *selected = NULL;
+  for (guint i = 0; i < volumes->len; i++) {
+    QuockerVolumeInfo *info = g_ptr_array_index(volumes, i);
+    if (g_str_equal(info->logical_name, logical_name)) {
+      selected = info;
+      break;
+    }
+  }
+  if (!selected) {
+    volume_error(error, "volume does not exist in this Compose project");
+    g_ptr_array_free(volumes, TRUE);
+    return FALSE;
+  }
+  char *metadata_path = g_strconcat(selected->disk_path, ".name", NULL);
+  gboolean removed = g_unlink(selected->disk_path) == 0;
+  if (!removed) {
+    volume_error(error, "could not remove the volume disk");
+  } else {
+    g_unlink(metadata_path);
+  }
+  g_free(metadata_path);
+  g_ptr_array_free(volumes, TRUE);
+  return removed;
+}
+
 gboolean quocker_volume_disk_prepare(const char *project_directory,
                                      const char *logical_name,
                                      guint64 size_bytes, char **disk_path_out,

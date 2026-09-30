@@ -467,10 +467,11 @@ in user-facing compatibility promises.
    default to 1 GiB and ``QUOCKER_VOLUME_SIZE`` can select 64 MiB through
    1 TiB.
 3. **Partially implemented:** volumes are created on demand with logical-name
-   metadata, listed per project with ``quocker volume ls``, and removed by
-   ``down --volumes`` after project VMs stop. Standalone inspect/remove, dry-run
-   previews, ownership records beyond the logical name, and recovery guidance
-   remain to be implemented.
+   metadata, listed and inspected per project, and removed with ``down
+   --volumes`` or ``quocker volume rm``. Removal has a dry-run preview and
+   refuses while a project service has a live or unverified PID. Richer
+   ownership records, crash recovery, and safeguards against concurrent
+   management commands remain to be implemented.
 4. Add explicit disk quotas and configurable retention/GC. Prevent invisible
    unbounded cache growth; show per-project and per-image disk usage.
 5. Handle backing-chain compaction, snapshots, consistency, concurrent access,

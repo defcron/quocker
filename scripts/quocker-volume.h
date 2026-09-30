@@ -26,4 +26,7 @@ gboolean quocker_volume_disk_prepare(const char *project_directory,
 gboolean quocker_volume_list(const char *project_directory,
                              GPtrArray **volumes_out, GError **error);
 
+gboolean quocker_volume_remove(const char *project_directory,
+                               const char *logical_name, GError **error);
+
 #endif
