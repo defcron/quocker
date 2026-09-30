@@ -52,11 +52,7 @@ int main(int argc, char **argv) {
   char *expected_image = g_canonicalize_filename(expected_image_path, NULL);
   g_assert_cmpstr(json_object_get_string_member(external, "image"), ==,
                   expected_image);
-  char *expected_env_path = g_build_filename(compose_directory, "extends",
-                                             "fragments", "common.env", NULL);
-  char *expected_env = g_canonicalize_filename(expected_env_path, NULL);
-  g_assert_cmpstr(json_object_get_string_member(external, "env_file"), ==,
-                  expected_env);
+  g_assert_false(json_object_has_member(external, "env_file"));
   JsonObject *external_environment =
       json_object_get_object_member(external, "environment");
   g_assert_cmpstr(json_object_get_string_member(external_environment, "SOURCE"),
@@ -65,8 +61,6 @@ int main(int argc, char **argv) {
       json_object_get_string_member(external_environment, "FROM_EXTENDS"), ==,
       "external");
 
-  g_free(expected_env);
-  g_free(expected_env_path);
   g_free(expected_image);
   g_free(expected_image_path);
   g_free(compose_directory);

@@ -2,6 +2,9 @@ name: json-test
 services:
   app:
     image: "alpine:latest"
+    env_file:
+      - config-json-base.env
+      - config-json-override.env
     cpus: 2
     mem_limit: 1G
     privileged: true
@@ -10,6 +13,10 @@ services:
       - "true"
       - "$${LITERAL}"
     environment:
+      SHARED: from-service
+      OVERRIDE_ME: ""
+      QUOCKER_CONFIG_UNRESOLVED:
+      ESCAPED_ENV: "$${LITERAL_ENV}"
       QUOCKER_DEFAULT_SET: ${QUOCKER_CONFIG_INTERPOLATION_SET:-fallback}
       QUOCKER_DEFAULT_MISSING: ${QUOCKER_CONFIG_INTERPOLATION_MISSING:-fallback}
       QUOCKER_DEFAULT_EMPTY: ${QUOCKER_CONFIG_INTERPOLATION_EMPTY:-fallback}

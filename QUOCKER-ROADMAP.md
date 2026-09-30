@@ -337,9 +337,12 @@ in user-facing compatibility promises.
    `:-`, `-`, `+`, and `:+`, and config rendering preserves escaped dollars
    while runtime values contain a literal dollar. Exhaustive compatibility
    fixtures and remaining env-file edge cases are open.
-4. Keep project interpolation distinct from per-service `environment` and
-   `env_file` processing. Resolve all relative paths using the correct base
-   file/project rules.
+4. **Partially implemented:** project interpolation remains separate from
+   per-service `environment` and `env_file` processing. Runtime and default
+   `config` output resolve service env files in order, merge environment
+   overrides (including empty and unresolved values), and remove `env_file`
+   from rendered services. Included project paths are resolved from their
+   declaring file. Full path-base and environment-format compatibility remains.
 5. **Partially implemented:** mappings merge recursively; ordinary sequences
    append; command, entrypoint, and healthcheck test sequences replace; ports
    merge by IP/target/published/protocol; and volumes, secrets, and configs
@@ -385,9 +388,10 @@ in user-facing compatibility promises.
 8. **Partially implemented:** profiles and project-name resolution work for
    service selection and interpolation. `config` emits YAML or JSON, lists
    sorted services, profiles, images, volumes, networks, or models, and prints
-   the interpolation environment; `-o`/`--output` atomically writes rendered YAML
-   or JSON. Schema-aware normalization, image resolution, path output modes,
-   and the remaining Docker Compose config flags remain.
+   the interpolation environment; `config` resolves service env files into
+   each service's `environment` map by default. `-o`/`--output` atomically writes
+   rendered YAML or JSON. Schema-aware normalization, image resolution, path
+   output modes, and the remaining Docker Compose config flags remain.
 9. **Partially implemented:** service-level `x-quocker` is versioned as
    version 1, with omitted version treated as legacy shorthand for version 1.
    The strict C validator accepts only `image` and `kernel` extension fields,

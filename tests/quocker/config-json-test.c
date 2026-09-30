@@ -6,6 +6,7 @@ int main(int argc, char **argv) {
   const char *cli = g_getenv("QUOCKER_CLI");
   g_assert_nonnull(cli);
   g_unsetenv("QUOCKER_CONFIG_INTERPOLATION_MISSING");
+  g_unsetenv("QUOCKER_CONFIG_UNRESOLVED");
   char *arguments[] = {(char *)cli, (char *)"-f", argv[1], (char *)"config",
                        (char *)"--format", (char *)"json", NULL};
   gchar *output = NULL;
@@ -35,7 +36,20 @@ int main(int argc, char **argv) {
   g_assert_cmpstr(json_array_get_string_element(command, 1), ==, "true");
   g_assert_cmpstr(json_array_get_string_element(command, 2), ==,
                   "$${LITERAL}");
+  g_assert_false(json_object_has_member(app, "env_file"));
   JsonObject *environment = json_object_get_object_member(app, "environment");
+  g_assert_cmpstr(json_object_get_string_member(environment, "BASE_ONLY"), ==,
+                  "base");
+  g_assert_cmpstr(json_object_get_string_member(environment, "OVERRIDE_ONLY"),
+                  ==, "override");
+  g_assert_cmpstr(json_object_get_string_member(environment, "SHARED"), ==,
+                  "from-service");
+  g_assert_cmpstr(json_object_get_string_member(environment, "OVERRIDE_ME"),
+                  ==, "");
+  g_assert_true(JSON_NODE_HOLDS_NULL(
+      json_object_get_member(environment, "QUOCKER_CONFIG_UNRESOLVED")));
+  g_assert_cmpstr(json_object_get_string_member(environment, "ESCAPED_ENV"),
+                  ==, "$${LITERAL_ENV}");
   g_assert_cmpstr(json_object_get_string_member(environment,
                                                 "QUOCKER_DEFAULT_SET"),
                   ==, "present");

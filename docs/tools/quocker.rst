@@ -300,6 +300,10 @@ emitted once.
 ``config --environment`` prints the merged process and
 environment-file values used for interpolation as sorted ``KEY=VALUE`` lines;
 process environment values take precedence over explicit env-file values.
+By default, rendered service ``env_file`` entries are read in order and merged
+into ``environment``; service ``environment`` entries take precedence,
+including explicit empty and unresolved values. The rendered service omits
+``env_file`` after this resolution.
 These output selection modes cannot be combined with ``--format``; without an
 output selection option, ``config`` renders YAML by default or JSON with
 ``--format json``.

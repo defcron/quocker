@@ -124,6 +124,7 @@ static const char *TAG_SEQ = "tag:yaml.org,2002:seq";
 static const char *TAG_NULL = "tag:yaml.org,2002:null";
 
 static gboolean service_image_is_local(YNode *service, const char *root);
+static gboolean yaml_null(const YNode *node);
 
 static const char *const unsupported_service_fields[] = {
     "annotations", "attach", "blkio_config", "build", "cap_add", "cap_drop",
@@ -369,7 +370,13 @@ static gboolean yaml_node_convert(yaml_document_t *document,
   }
   YNode *node;
   if (source->type == YAML_SCALAR_NODE) {
-    node = node_new(NODE_SCALAR, (const char *)source->tag);
+    const char *tag = (const char *)source->tag;
+    if (source->data.scalar.length == 0 &&
+        source->data.scalar.style == YAML_PLAIN_SCALAR_STYLE &&
+        g_str_equal(tag, TAG_STR)) {
+      tag = TAG_NULL;
+    }
+    node = node_new(NODE_SCALAR, tag);
     node->scalar = g_strndup((const char *)source->data.scalar.value,
                              source->data.scalar.length);
     node->scalar_style = source->data.scalar.style;
@@ -667,6 +674,11 @@ static char *interpolate_text(const char *text, GHashTable *environment) {
 
 static gboolean interpolate_node(YNode *node, GHashTable *environment) {
   if (node->kind == NODE_SCALAR) {
+    /* Compose treats YAML nulls as unresolved environment entries.  Keep the
+     * null tag through interpolation so config rendering can preserve it. */
+    if (yaml_null(node)) {
+      return TRUE;
+    }
     char *compose_expanded = NULL;
     char *expanded = interpolate_text_depth(
         node->scalar ? node->scalar : "", environment, 0,
@@ -1329,6 +1341,15 @@ static YNode *node_merge(const YNode *base, const YNode *override,
 static gboolean emit_node(yaml_emitter_t *emitter, const YNode *node) {
   yaml_event_t event;
   if (node->kind == NODE_SCALAR) {
+    if (yaml_null(node)) {
+      if (!yaml_scalar_event_initialize(
+              &event, NULL, (yaml_char_t *)TAG_NULL,
+              (yaml_char_t *)"null", 4, TRUE, TRUE,
+              YAML_PLAIN_SCALAR_STYLE)) {
+        return FALSE;
+      }
+      return yaml_emitter_emit(emitter, &event);
+    }
     const char *scalar = node->compose_scalar ? node->compose_scalar
                                                : node->scalar;
     yaml_scalar_style_t style = YAML_DOUBLE_QUOTED_SCALAR_STYLE;
@@ -1458,6 +1479,10 @@ static void json_add_yaml_value(JsonBuilder *builder, const YNode *node,
       json_add_yaml_value(builder, pair->value, FALSE);
     }
     json_builder_end_object(builder);
+    return;
+  }
+  if (!mapping_key && yaml_null(node)) {
+    json_builder_add_null_value(builder);
     return;
   }
   const char *text = node->compose_scalar
@@ -4707,6 +4732,128 @@ static gboolean parse_service_env_files(YNode *node, const char *project_root,
     *values_out = NULL;
   }
   return ok;
+}
+
+static const char *config_environment_compose_value(YNode *environment,
+                                                    const char *name,
+                                                    const char *effective) {
+  if (!environment || yaml_null(environment)) {
+    return effective;
+  }
+  if (environment->kind == NODE_MAPPING) {
+    YNode *value = map_get(environment, name);
+    if (!value || yaml_null(value)) {
+      return effective;
+    }
+    return value->compose_scalar ? value->compose_scalar : node_string(value);
+  }
+  if (environment->kind == NODE_SEQUENCE) {
+    const char *compose_value = effective;
+    for (guint i = 0; i < environment->items->len; i++) {
+      YNode *entry_node = g_ptr_array_index(environment->items, i);
+      const char *entry = node_string(entry_node);
+      const char *equals = entry ? strchr(entry, '=') : NULL;
+      if (!equals || (gsize)(equals - entry) != strlen(name) ||
+          strncmp(entry, name, strlen(name)) != 0) {
+        continue;
+      }
+      const char *rendered = entry_node->compose_scalar
+                                 ? entry_node->compose_scalar
+                                 : entry;
+      const char *rendered_equals = strchr(rendered, '=');
+      compose_value = rendered_equals ? rendered_equals + 1 : effective;
+    }
+    return compose_value;
+  }
+  return effective;
+}
+
+static YNode *config_environment_string(const char *value,
+                                        const char *compose_value) {
+  if (!value) {
+    YNode *node = node_new(NODE_SCALAR, TAG_NULL);
+    node->scalar = g_strdup("null");
+    return node;
+  }
+  YNode *node = node_new(NODE_SCALAR, TAG_STR);
+  node->scalar = g_strdup(value);
+  node->scalar_style = YAML_DOUBLE_QUOTED_SCALAR_STYLE;
+  if (compose_value && !g_str_equal(value, compose_value)) {
+    node->compose_scalar = g_strdup(compose_value);
+  }
+  return node;
+}
+
+static gboolean resolve_config_service_env_files(YNode *config,
+                                                 const char *project_root,
+                                                 GHashTable *environment) {
+  YNode *services = map_get(config, "services");
+  for (guint i = 0; services && i < services->items->len; i++) {
+    YPair *service_pair = g_ptr_array_index(services->items, i);
+    const char *service_name = node_string(service_pair->key);
+    YNode *service = service_pair->value;
+    YNode *env_file = map_get(service, "env_file");
+    if (!env_file) {
+      continue;
+    }
+    GHashTable *file_values = NULL;
+    GHashTable *overrides = NULL;
+    if (!parse_service_env_files(env_file, project_root, service_name,
+                                 environment, &file_values) ||
+        !parse_environment_override(map_get(service, "environment"),
+                                    service_name, &overrides)) {
+      if (file_values) {
+        g_hash_table_destroy(file_values);
+      }
+      if (overrides) {
+        g_hash_table_destroy(overrides);
+      }
+      return FALSE;
+    }
+    GHashTableIter iterator;
+    gpointer key;
+    gpointer value;
+    g_hash_table_iter_init(&iterator, overrides);
+    while (g_hash_table_iter_next(&iterator, &key, &value)) {
+      g_hash_table_replace(file_values, g_strdup(key), g_strdup(value));
+    }
+    GHashTable *keys = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                             NULL);
+    g_hash_table_iter_init(&iterator, file_values);
+    while (g_hash_table_iter_next(&iterator, &key, NULL)) {
+      g_hash_table_add(keys, g_strdup(key));
+    }
+    GPtrArray *ordered_keys = g_ptr_array_new_with_free_func(g_free);
+    g_hash_table_iter_init(&iterator, keys);
+    while (g_hash_table_iter_next(&iterator, &key, NULL)) {
+      g_ptr_array_add(ordered_keys, g_strdup(key));
+    }
+    g_ptr_array_sort(ordered_keys, compare_string_pointers);
+    YNode *resolved_environment = node_new(NODE_MAPPING, TAG_MAP);
+    YNode *original_environment = map_get(service, "environment");
+    for (guint j = 0; j < ordered_keys->len; j++) {
+      const char *name = g_ptr_array_index(ordered_keys, j);
+      const char *resolved = g_hash_table_lookup(file_values, name);
+      const char *compose_value =
+          config_environment_compose_value(original_environment, name,
+                                           resolved);
+      YNode *key_node = node_new(NODE_SCALAR, TAG_STR);
+      key_node->scalar = g_strdup(name);
+      key_node->scalar_style = YAML_DOUBLE_QUOTED_SCALAR_STYLE;
+      YNode *value_node = config_environment_string(resolved, compose_value);
+      YPair *entry = g_new0(YPair, 1);
+      entry->key = key_node;
+      entry->value = value_node;
+      g_ptr_array_add(resolved_environment->items, entry);
+    }
+    g_ptr_array_free(ordered_keys, TRUE);
+    g_hash_table_destroy(keys);
+    g_hash_table_destroy(overrides);
+    g_hash_table_destroy(file_values);
+    map_remove(service, "env_file");
+    map_set(service, "environment", resolved_environment);
+  }
+  return TRUE;
 }
 
 static gboolean compose_volume_source_is_bind(const char *source) {
@@ -8312,6 +8459,10 @@ int main(int argc, char **argv) {
   char *project_lower = NULL;
   if (!parse_compose_files(files, root, opts.env_files, opts.project_name,
                            &config, &project_environment, &project_lower)) {
+    return 1;
+  }
+  if (g_str_equal(opts.command, "config") &&
+      !resolve_config_service_env_files(config, root, project_environment)) {
     return 1;
   }
   YNode *services = map_get(config, "services");
