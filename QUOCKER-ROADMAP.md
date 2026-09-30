@@ -88,8 +88,8 @@ has a meaningful VM equivalent.
   libyaml, libcurl, json-glib,
   libarchive, OpenSSL, and libext2fs as an optional Meson target. The full QEMU
   11.1.2 build and the updated Quocker target compile completed. The Quocker
-  Meson suite currently has 63 focused tests; its latest run reported 41
-  passes, 22 expected failures, and no unexpected failures.
+  Meson suite currently has 70 focused tests; its latest run reported 44
+  passes, 26 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
   and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
   ownership and extended-attribute metadata, traversal and symlink-parent
@@ -116,7 +116,9 @@ has a meaningful VM equivalent.
   unimplemented standard assertion keyword. Validation errors include source
   file, line, and column, with regressions for top-level, nested, merged, and
   included-file errors. `config --capabilities` reports the runtime status of
-  service fields present in the merged configuration.
+  service fields present in the merged configuration. Service-level
+  `x-quocker` version 1 now validates allowed fields and value types at config
+  load time, with explicit unknown-field/version rejection.
   Phase 3 now orders
   selected services after their `depends_on` dependencies and offers
   `up --dry-run`; optional dependencies marked `required: false` warn and skip
@@ -361,8 +363,14 @@ in user-facing compatibility promises.
    sorted services, profiles, images, volumes, or networks, and prints the
    interpolation environment. Schema-aware normalization, image resolution,
    path output modes, and the remaining Docker Compose config flags remain.
-9. Maintain the custom `x-quocker` namespace separately from Compose fields;
-   version it and validate it just as strictly.
+9. **Partially implemented:** service-level `x-quocker` is versioned as
+   version 1, with omitted version treated as legacy shorthand for version 1.
+   The strict C validator accepts only `image` and `kernel` extension fields,
+   validates kernel IDs, minimum versions, feature lists, and module-release
+   lists, and rejects unknown fields or versions during `config`. Kernel
+   overrides are rejected for local bootable disks, where QEMU uses the guest
+   kernel contained in the disk. Top-level namespace design and compatibility
+   fixtures for future extension versions remain.
 
 ### Phase 3 — Reach useful Compose CLI compatibility
 

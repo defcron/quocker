@@ -108,6 +108,8 @@ static const char *TAG_MAP = "tag:yaml.org,2002:map";
 static const char *TAG_SEQ = "tag:yaml.org,2002:seq";
 static const char *TAG_NULL = "tag:yaml.org,2002:null";
 
+static gboolean service_image_is_local(YNode *service, const char *root);
+
 static const char *const unsupported_service_fields[] = {
     "build", "command", "entrypoint", "environment", "env_file",
     "volumes", "networks", "healthcheck", "secrets", "configs",
@@ -776,6 +778,166 @@ static gboolean yaml_parse_text(const char *text, const char *source_file,
   return ok;
 }
 
+static gboolean quocker_extension_error(const YNode *node,
+                                        const char *service_name,
+                                        const char *detail) {
+  char *message = g_strdup_printf("service '%s': %s", service_name, detail);
+  if (node && node->source_file) {
+    fail("%s:%u:%u: %s", node->source_file, node->source_line,
+         node->source_column, message);
+  } else {
+    fail("%s", message);
+  }
+  g_free(message);
+  return FALSE;
+}
+
+static gboolean valid_quocker_version(const char *version) {
+  if (!version || !*version || strlen(version) > 64) {
+    return FALSE;
+  }
+  gboolean digit = FALSE;
+  guint component_digits = 0;
+  for (const char *p = version; *p; p++) {
+    if (g_ascii_isdigit(*p)) {
+      digit = TRUE;
+      if (++component_digits > 10) {
+        return FALSE;
+      }
+    } else if (*p == '.' && digit && p[1]) {
+      digit = FALSE;
+      component_digits = 0;
+    } else {
+      return FALSE;
+    }
+  }
+  return digit;
+}
+
+static gboolean validate_quocker_string_list(const YNode *node,
+                                             gboolean comma_separated,
+                                             gboolean module_releases) {
+  if (!node || (node->kind != NODE_SCALAR && node->kind != NODE_SEQUENCE)) {
+    return FALSE;
+  }
+  guint count = node->kind == NODE_SEQUENCE ? node->items->len : 1;
+  for (guint i = 0; i < count; i++) {
+    const char *value = node->kind == NODE_SEQUENCE
+                            ? node_string(g_ptr_array_index(node->items, i))
+                            : node_string(node);
+    if (!value) {
+      return FALSE;
+    }
+    if (node->kind == NODE_SCALAR && comma_separated) {
+      gchar **parts = g_strsplit(value, ",", -1);
+      for (guint j = 0; parts[j]; j++) {
+        char *token = g_strstrip(parts[j]);
+        if (!*token || (module_releases &&
+                        !valid_kernel_module_release(token))) {
+          g_strfreev(parts);
+          return FALSE;
+        }
+      }
+      g_strfreev(parts);
+    } else if (!*value || (module_releases &&
+                           !valid_kernel_module_release(value))) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+static gboolean validate_quocker_kernel_extension(const YNode *kernel,
+                                                  const char *service_name) {
+  if (kernel->kind != NODE_MAPPING) {
+    return quocker_extension_error(kernel, service_name,
+                                   "x-quocker.kernel must be a mapping");
+  }
+  for (guint i = 0; i < kernel->items->len; i++) {
+    YPair *pair = g_ptr_array_index(kernel->items, i);
+    const char *key = node_string(pair->key);
+    if (!key || (!g_str_equal(key, "id") && !g_str_equal(key, "minimum") &&
+                 !g_str_equal(key, "require") &&
+                 !g_str_equal(key, "module_releases"))) {
+      return quocker_extension_error(pair->key, service_name,
+                                     "x-quocker.kernel has an unknown field");
+    }
+  }
+  const char *id = node_string(map_get(kernel, "id"));
+  const char *minimum = node_string(map_get(kernel, "minimum"));
+  if ((map_get(kernel, "id") && (!id || !*id)) ||
+      (map_get(kernel, "minimum") && !valid_quocker_version(minimum))) {
+    return quocker_extension_error(kernel, service_name,
+                                   "x-quocker.kernel id must be non-empty and "
+                                   "minimum must be a dotted numeric version");
+  }
+  YNode *required = map_get(kernel, "require");
+  if (required && !validate_quocker_string_list(required, TRUE, FALSE)) {
+    return quocker_extension_error(
+        required, service_name,
+        "x-quocker.kernel.require must contain non-empty feature strings");
+  }
+  YNode *module_releases = map_get(kernel, "module_releases");
+  if (module_releases &&
+      !validate_quocker_string_list(module_releases, TRUE, TRUE)) {
+    return quocker_extension_error(
+        module_releases, service_name,
+        "x-quocker.kernel.module_releases must contain valid release strings");
+  }
+  return TRUE;
+}
+
+static gboolean validate_quocker_extensions(const YNode *config,
+                                            const char *root) {
+  YNode *services = map_get(config, "services");
+  for (guint i = 0; services && i < services->items->len; i++) {
+    YPair *service_pair = g_ptr_array_index(services->items, i);
+    const char *service_name = node_string(service_pair->key);
+    YNode *service = service_pair->value;
+    YNode *extension = map_get(service, "x-quocker");
+    if (!extension) {
+      continue;
+    }
+    if (extension->kind != NODE_MAPPING) {
+      return quocker_extension_error(extension, service_name,
+                                     "x-quocker must be a mapping");
+    }
+    for (guint j = 0; j < extension->items->len; j++) {
+      YPair *pair = g_ptr_array_index(extension->items, j);
+      const char *key = node_string(pair->key);
+      if (!key || (!g_str_equal(key, "version") &&
+                   !g_str_equal(key, "image") &&
+                   !g_str_equal(key, "kernel"))) {
+        return quocker_extension_error(pair->key, service_name,
+                                       "x-quocker has an unknown field");
+      }
+    }
+    YNode *version_node = map_get(extension, "version");
+    const char *version = node_string(version_node);
+    if (version_node && g_strcmp0(version, "1") != 0) {
+      return quocker_extension_error(
+          version_node, service_name,
+          "unsupported x-quocker version; this build supports version 1");
+    }
+    YNode *image_node = map_get(extension, "image");
+    const char *image = node_string(image_node);
+    if (image_node && (!image || !*image)) {
+      return quocker_extension_error(image_node, service_name,
+                                     "x-quocker.image must be a non-empty string");
+    }
+    YNode *kernel = map_get(extension, "kernel");
+    if (kernel && !validate_quocker_kernel_extension(kernel, service_name)) {
+      return FALSE;
+    }
+    if (kernel && service_image_is_local(service, root)) {
+      return quocker_extension_error(
+          kernel, service_name,
+          "x-quocker.kernel applies only to OCI-backed services");
+    }
+  }
+  return TRUE;
+}
+
 static YNode *node_at_schema_path(YNode *root, const char *path) {
   if (!path || path[0] != '$' || (path[1] && path[1] != '/')) {
     return NULL;
@@ -1022,6 +1184,16 @@ static YNode *node_merge(const YNode *base, const YNode *override,
         value = node_clone(incoming->value);
       }
       map_set(result, key ? key : "", value);
+      if (key) {
+        for (guint j = 0; j < result->items->len; j++) {
+          YPair *result_pair = g_ptr_array_index(result->items, j);
+          if (g_strcmp0(node_string(result_pair->key), key) == 0) {
+            node_free(result_pair->key);
+            result_pair->key = node_clone(incoming->key);
+            break;
+          }
+        }
+      }
     }
     return result;
   }
@@ -1262,8 +1434,6 @@ static gint compare_string_pointers(gconstpointer left, gconstpointer right) {
   const char *const *right_string = right;
   return g_strcmp0(*left_string, *right_string);
 }
-
-static gboolean service_image_is_local(YNode *service, const char *root);
 
 static gboolean string_in_list(const char *value,
                                const char *const *items) {
@@ -2394,6 +2564,11 @@ static gboolean parse_compose_files(GPtrArray *files, const char *root,
                               : "Compose schema validation failed");
     }
     g_free(schema_error);
+    node_free(merged);
+    g_hash_table_destroy(environment);
+    return FALSE;
+  }
+  if (!validate_quocker_extensions(merged, root)) {
     node_free(merged);
     g_hash_table_destroy(environment);
     return FALSE;

@@ -1,0 +1,11 @@
+services:
+  app:
+    image: alpine
+    x-quocker:
+      version: 1
+      image: alpine
+      kernel:
+        id: generic
+        minimum: 6.1.0
+        require: [ext4, virtio_blk]
+        module_releases: [6.1.0-generic]

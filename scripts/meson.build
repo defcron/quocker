@@ -88,6 +88,29 @@ if not get_option('quocker').disabled()
     test('quocker-config-capabilities', quocker_config_capabilities_test,
          args: [quocker, files('../tests/quocker/config-capabilities.yaml')],
          suite: ['quocker'])
+    test('quocker-x-quocker-v1', quocker,
+         args: ['-f', files('../tests/quocker/x-quocker-v1.yaml'),
+                'config', '--quiet'], suite: ['quocker'])
+    test('quocker-x-quocker-legacy-v1', quocker,
+         args: ['-f', files('../tests/quocker/x-quocker-legacy.yaml'),
+                'config', '--quiet'], suite: ['quocker'])
+    test('quocker-x-quocker-kernel-local-disk', quocker,
+         args: ['-f', files('../tests/quocker/x-quocker-kernel-local-disk.yaml'),
+                'config', '--quiet'], should_fail: true, suite: ['quocker'])
+    test('quocker-x-quocker-unknown-field', quocker,
+         args: ['-f', files('../tests/quocker/x-quocker-unknown-field.yaml'),
+                'config', '--quiet'], should_fail: true, suite: ['quocker'])
+    test('quocker-x-quocker-unknown-kernel-field', quocker,
+         args: ['-f', files('../tests/quocker/x-quocker-unknown-kernel-field.yaml'),
+                'config', '--quiet'], should_fail: true, suite: ['quocker'])
+    test('quocker-x-quocker-error-location', quocker_schema_location_test,
+         args: [quocker,
+                files('../tests/quocker/x-quocker-unknown-kernel-field.yaml'),
+                'x-quocker-unknown-kernel-field.yaml:7:9:'],
+         suite: ['quocker'])
+    test('quocker-x-quocker-unsupported-version', quocker,
+         args: ['-f', files('../tests/quocker/x-quocker-unsupported-version.yaml'),
+                'config', '--quiet'], should_fail: true, suite: ['quocker'])
     quocker_guest_status_test = executable(
       'quocker-guest-status-test',
       [files('../tests/quocker/guest-status-test.c'),

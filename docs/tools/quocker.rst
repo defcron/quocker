@@ -119,6 +119,15 @@ detect shipped kernel module releases, apply image kernel labels and
 ``x-quocker.kernel`` overrides, and select a matching entry from the signed
 local catalog. Set ``QUOCKER_KERNEL_CATALOG`` and
 ``QUOCKER_KERNEL_CATALOG_PUBKEY`` to override the catalog and trust-key paths.
+The service-level ``x-quocker`` extension is version 1; ``version: 1`` is
+recommended, while omitted ``version`` remains a version-1 shorthand for
+existing files. It accepts only ``image`` and ``kernel`` alongside ``version``.
+The kernel mapping accepts ``id``, dotted-numeric ``minimum``, ``require``
+feature names, and ``module_releases``. Extension structure and value types are
+validated during ``config`` as well as before runtime, and unknown fields or
+unsupported extension versions are errors. Kernel overrides apply to OCI guest
+images; Quocker rejects them for local bootable disks, whose kernel is part of
+the disk image.
 ``quocker kernel update --url https://HOST/path/kernels.json`` fetches a catalog
 and its adjacent ``.sig`` file, verifies the Ed25519 signature against the
 configured trusted key, validates every entry, then installs the pair

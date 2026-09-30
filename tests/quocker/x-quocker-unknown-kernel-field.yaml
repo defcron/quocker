@@ -1,0 +1,7 @@
+services:
+  app:
+    image: alpine
+    x-quocker:
+      kernel:
+        id: generic
+        typo: true

@@ -1,0 +1,6 @@
+services:
+  app:
+    image: ./disk.qcow2
+    x-quocker:
+      kernel:
+        id: generic
