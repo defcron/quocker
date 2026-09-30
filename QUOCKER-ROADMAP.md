@@ -91,13 +91,13 @@ has a meaningful VM equivalent.
   Meson suite currently has 75 focused tests; its latest run reported 49
   passes, 26 expected failures, and no unexpected failures.
   Tests include Docker config registry-auth parsing, Compose dependency order,
-  and QEMU user-network port mapping validation. The rootfs suite covers whiteouts, guest
-  ownership and extended-attribute metadata, traversal and symlink-parent
-  rejection, hard-link target traversal rejection, gzip-compressed layer
-  materialization, inert device placeholders, pruning, and the cache-limit
-  completion-marker regression. Eight rootfs cases include OS-release
-  confinement, the standard usr/lib symlink, embedded-NUL rejection, and
-  module-release detection. Five kernel-catalog cases cover signed catalogs,
+  and QEMU user-network port mapping validation. The rootfs suite covers
+  whiteouts, guest ownership and extended-attribute metadata, traversal,
+  symlink-parent, and hard-link target rejection, gzip-compressed layer
+  materialization, manifest/layer provenance metadata and cache validation,
+  inert device placeholders, pruning, and the cache-limit completion-marker
+  regression. Rootfs detection cases cover OS-release confinement, the standard
+  usr/lib symlink, embedded-NUL rejection, and module-release detection. Five kernel-catalog cases cover signed catalogs,
   distro priority, family/pin selection, image minimum-version/feature
   matching, CLI output, platform
   matching, and asset digest verification. Two disk-conversion cases verify
@@ -492,10 +492,11 @@ in user-facing compatibility promises.
    beside the manifest-addressed rootfs after cache-quota preflight. OCI `up`
    now invokes disk conversion when needed. Regressions reject path traversal,
    symlink-parent traversal, and hard-link target traversal, and materialize a
-   gzip-compressed layer. Additional malformed archive/compression fixtures and
-   rootfs provenance metadata remain open.
-   Add broader malicious-archive and compression fixtures, and preserve rootfs
-   provenance in metadata.
+   gzip-compressed layer. A `.provenance` sidecar records the selected manifest
+   digest and each materialization layer's SHA-256; cache reuse requires the
+   record to match the supplied layer files. Additional malformed archive and
+   compression fixtures remain open.
+   Add broader malicious-archive and compression fixtures.
 5. **Partially implemented:** a C kernel catalog selector matches OS,
    architecture, and variant, prefers exact distro IDs over `ID_LIKE` family
    matches and generic entries, permits an explicit catalog ID, and verifies

@@ -408,6 +408,38 @@ static void test_gzip_layer_is_materialized(void) {
   g_assert_true(g_file_get_contents(payload, &actual, NULL, NULL));
   g_assert_cmpstr(actual, ==, contents[0]);
   g_free(actual);
+  gchar *compressed = NULL;
+  gsize compressed_length = 0;
+  g_assert_true(
+      g_file_get_contents(layer, &compressed, &compressed_length, NULL));
+  char *layer_digest = g_compute_checksum_for_data(
+      G_CHECKSUM_SHA256, (const guchar *)compressed, compressed_length);
+  char *expected_provenance = g_strdup_printf(
+      "quocker-rootfs-provenance-v1\nmanifest=%s\nlayer[0]=sha256:%s\n",
+      digest, layer_digest);
+  char *provenance_path = g_strconcat(rootfs, ".provenance", NULL);
+  char *provenance = NULL;
+  g_assert_true(g_file_get_contents(provenance_path, &provenance, NULL, NULL));
+  g_assert_cmpstr(provenance, ==, expected_provenance);
+  g_free(provenance);
+  char *cached_rootfs = NULL;
+  g_assert_true(
+      quocker_rootfs_materialize(digest, layers, cache, &cached_rootfs));
+  g_assert_cmpstr(cached_rootfs, ==, rootfs);
+  g_free(cached_rootfs);
+  g_assert_true(g_file_set_contents(provenance_path, "tampered\n", -1, NULL));
+  g_assert_true(
+      quocker_rootfs_materialize(digest, layers, cache, &cached_rootfs));
+  g_assert_cmpstr(cached_rootfs, ==, rootfs);
+  g_free(cached_rootfs);
+  provenance = NULL;
+  g_assert_true(g_file_get_contents(provenance_path, &provenance, NULL, NULL));
+  g_assert_cmpstr(provenance, ==, expected_provenance);
+  g_free(provenance);
+  g_free(provenance_path);
+  g_free(expected_provenance);
+  g_free(layer_digest);
+  g_free(compressed);
   guint64 removed = 0;
   g_assert_true(quocker_rootfs_cache_prune(cache, &removed));
   g_assert_cmpint(g_unlink(layer), ==, 0);

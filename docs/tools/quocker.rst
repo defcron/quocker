@@ -317,9 +317,13 @@ images from Docker Hub or another HTTPS registry, select the requested Linux
 platform, verify manifest/config/layer digests, and safely materialize layer
 tar files into a rootfs directory under the content cache. The extractor
 applies OCI whiteouts, rejects path traversal and symlink-parent traversal,
-and enforces entry and expanded-size limits. Character/block devices and
-FIFOs are stored as ordinary placeholder files with guest type/device metadata;
-sockets and unknown types are rejected. OCI
+and enforces entry and expanded-size limits. It rejects path, symlink-parent,
+and hard-link target traversal, and supports gzip-compressed layers.
+Character/block devices and FIFOs are stored as ordinary placeholder files
+with guest type/device metadata; sockets and unknown types are rejected. A
+``.provenance`` sidecar records the selected manifest digest and SHA-256 digest
+of each layer used to materialize the tree; cache reuse requires that metadata
+to match the current layer inputs. OCI
 UID/GID/mode metadata and OCI extended attributes are retained in Quocker user
 xattrs because extraction does not run as host root. Privileged attributes such
 as ``security.capability`` are recorded as inert metadata, never applied to the

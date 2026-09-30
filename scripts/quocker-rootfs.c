@@ -37,6 +37,57 @@ static gboolean store_extended_attributes(int fd, int parent_fd,
                                           struct archive_entry *entry,
                                           const char *cache_directory);
 
+static gboolean rootfs_provenance_build(const char *manifest_digest,
+                                        GPtrArray *layer_paths,
+                                        char **contents_out) {
+  GString *contents = g_string_new("quocker-rootfs-provenance-v1\n");
+  g_string_append_printf(contents, "manifest=%s\n", manifest_digest);
+  for (guint i = 0; i < layer_paths->len; i++) {
+    const char *path = g_ptr_array_index(layer_paths, i);
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    struct stat st;
+    if (fd < 0 || fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+      if (fd >= 0) {
+        close(fd);
+      }
+      g_string_free(contents, TRUE);
+      rootfs_error("cannot inspect OCI layer while recording provenance");
+      return FALSE;
+    }
+    GChecksum *checksum = g_checksum_new(G_CHECKSUM_SHA256);
+    char buffer[64 * 1024];
+    gboolean ok = TRUE;
+    for (;;) {
+      ssize_t count = read(fd, buffer, sizeof(buffer));
+      if (count < 0 && errno == EINTR) {
+        continue;
+      }
+      if (count < 0) {
+        ok = FALSE;
+      } else if (count == 0) {
+        break;
+      } else {
+        g_checksum_update(checksum, (const guchar *)buffer, (gsize)count);
+      }
+      if (!ok) {
+        break;
+      }
+    }
+    close(fd);
+    if (!ok) {
+      g_checksum_free(checksum);
+      g_string_free(contents, TRUE);
+      rootfs_error("cannot read OCI layer while recording provenance");
+      return FALSE;
+    }
+    g_string_append_printf(contents, "layer[%u]=sha256:%s\n", i,
+                           g_checksum_get_string(checksum));
+    g_checksum_free(checksum);
+  }
+  *contents_out = g_string_free(contents, FALSE);
+  return TRUE;
+}
+
 static gboolean set_xattr_at(int parent_fd, const char *name,
                              const char *attribute, const void *value,
                              size_t value_size) {
@@ -765,6 +816,16 @@ gboolean quocker_rootfs_materialize(const char *manifest_digest,
     rootfs_error("invalid selected manifest digest");
     return FALSE;
   }
+  for (guint i = 7; i < 71; i++) {
+    if (!g_ascii_isxdigit(manifest_digest[i])) {
+      rootfs_error("invalid selected manifest digest");
+      return FALSE;
+    }
+  }
+  if (!layer_paths) {
+    rootfs_error("missing OCI layer list");
+    return FALSE;
+  }
   char *rootfs_parent = g_build_filename(cache_directory, "rootfs", NULL);
   struct stat parent_stat;
   if (g_mkdir_with_parents(rootfs_parent, 0700) < 0 ||
@@ -778,24 +839,43 @@ gboolean quocker_rootfs_materialize(const char *manifest_digest,
   const char *hex = manifest_digest + strlen("sha256:");
   char *final_path = g_build_filename(rootfs_parent, hex, NULL);
   char *marker_path = g_strdup_printf("%s.complete", final_path);
+  char *provenance_path = g_strdup_printf("%s.provenance", final_path);
+  char *provenance = NULL;
+  if (!rootfs_provenance_build(manifest_digest, layer_paths, &provenance)) {
+    g_free(provenance_path);
+    g_free(marker_path);
+    g_free(final_path);
+    g_free(rootfs_parent);
+    return FALSE;
+  }
   char *marker = NULL;
+  char *saved_provenance = NULL;
   if (g_file_get_contents(marker_path, &marker, NULL, NULL) &&
       g_strcmp0(marker, manifest_digest) == 0 &&
+      g_file_get_contents(provenance_path, &saved_provenance, NULL, NULL) &&
+      g_strcmp0(saved_provenance, provenance) == 0 &&
       g_file_test(final_path, G_FILE_TEST_IS_DIR)) {
     if (rootfs_path_out)
       *rootfs_path_out = g_strdup(final_path);
     g_free(marker);
+    g_free(saved_provenance);
+    g_free(provenance);
+    g_free(provenance_path);
     g_free(marker_path);
     g_free(final_path);
     g_free(rootfs_parent);
     return TRUE;
   }
   g_free(marker);
+  g_free(saved_provenance);
   g_unlink(marker_path);
+  g_unlink(provenance_path);
   if (g_file_test(final_path, G_FILE_TEST_EXISTS) &&
       !remove_rootfs_directory(rootfs_parent, hex)) {
     rootfs_error("cannot remove incomplete previous rootfs");
     g_free(marker_path);
+    g_free(provenance);
+    g_free(provenance_path);
     g_free(final_path);
     g_free(rootfs_parent);
     return FALSE;
@@ -806,6 +886,8 @@ gboolean quocker_rootfs_materialize(const char *manifest_digest,
     rootfs_error("cannot create private rootfs staging directory");
     g_free(template);
     g_free(marker_path);
+    g_free(provenance);
+    g_free(provenance_path);
     g_free(final_path);
     g_free(rootfs_parent);
     return FALSE;
@@ -833,19 +915,25 @@ gboolean quocker_rootfs_materialize(const char *manifest_digest,
     rootfs_error(
         "rootfs materialization failed; incomplete staging was removed");
   } else {
-    if (!quocker_oci_cache_has_room(cache_directory, strlen(manifest_digest))) {
+    guint64 metadata_size = strlen(manifest_digest) + strlen(provenance);
+    if (!quocker_oci_cache_has_room(cache_directory, metadata_size)) {
       remove_rootfs_directory(rootfs_parent, hex);
       ok = FALSE;
       rootfs_error("OCI cache limit exceeded while writing rootfs marker");
-    } else if (!g_file_set_contents(marker_path, manifest_digest, -1, NULL)) {
+    } else if (!g_file_set_contents(provenance_path, provenance, -1, NULL) ||
+               !g_file_set_contents(marker_path, manifest_digest, -1, NULL)) {
+      g_unlink(provenance_path);
+      g_unlink(marker_path);
       remove_rootfs_directory(rootfs_parent, hex);
       ok = FALSE;
-      rootfs_error("could not mark materialized rootfs complete");
+      rootfs_error("could not write rootfs provenance/completion metadata");
     } else if (rootfs_path_out) {
       *rootfs_path_out = g_strdup(final_path);
     }
   }
   g_free(template);
+  g_free(provenance);
+  g_free(provenance_path);
   g_free(marker_path);
   g_free(final_path);
   g_free(rootfs_parent);
